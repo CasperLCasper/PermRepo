@@ -1,4 +1,4 @@
-const { execSync } = require('child_process');
+const { execSync } = require('node:child_process');
 const core = require('@actions/core');
 
 async function run() {
@@ -12,7 +12,7 @@ async function run() {
         const turboPayment = core.getInput('turbo_payment_url');
 
         const cmd = [
-            'npx perma-repo backup',
+            'npx perm-repo backup',
             `--wallet ${wallet}`,
             `--subscription ${subscription}`,
             `--nft ${nft}`,
