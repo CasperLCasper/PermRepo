@@ -28,7 +28,7 @@ function scanFiles(rootPath) {
         try {
             entries = fs.readdirSync(dir, { withFileTypes: true });
         } catch (error) {
-            console.warn(`⚠️ Nevar nolasīt direktoriju: ${dir}`);
+            console.warn({ warning: 'cannot_read_directory', path: dir, error: error.message });
             return;
         }
 
@@ -48,7 +48,7 @@ function scanFiles(rootPath) {
                         size: content.length
                     };
                 } catch (error) {
-                    console.warn(`⚠️ Nevar nolasīt failu: ${relativePath}`);
+                    console.warn({ warning: 'cannot_read_file', path: relativePath, error: error.message });
                 }
             }
         }
@@ -126,7 +126,7 @@ function saveLock(repoPath, unchanged, uploaded) {
     try {
         fs.writeFileSync(lockPath, JSON.stringify(data, null, 2));
     } catch (error) {
-        console.warn(`⚠️ Nevar saglabāt lock failu: ${error.message}`);
+        console.warn({ warning: 'cannot_save_lock_file', error: error.message });
     }
 }
 
@@ -160,14 +160,13 @@ function getRepoName(repoPath) {
             const urlMatch = configContent.match(/url = (.+)/);
             if (urlMatch) {
                 const remoteUrl = urlMatch[1].trim();
-                // Vienkāršota regex — bez backtracking
                 const repoMatch = remoteUrl.match(/\/([^/]+\/[^/]+?)(\.git)?$/);
                 if (repoMatch) {
                     return repoMatch[1];
                 }
             }
         } catch (error) {
-            // Klusām turpinām
+            console.warn({ warning: 'cannot_read_git_config', error: error.message });
         }
     }
 
@@ -177,7 +176,7 @@ function getRepoName(repoPath) {
             return path.basename(repoPath);
         }
     } catch (error) {
-        // Klusām turpinām
+        console.warn({ warning: 'cannot_read_directory', path: repoPath, error: error.message });
     }
 
     return 'unknown-repo';
