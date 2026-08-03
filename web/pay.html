@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PermRepo — NFT Kalšana</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#c9d1d9;display:flex;justify-content:center;align-items:center;min-height:100vh}.container{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:40px;max-width:480px;width:100%}h1{font-size:24px;margin-bottom:8px;color:#58a6ff}.subtitle{color:#8b949e;margin-bottom:24px;font-size:14px}.info-row{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #21262d}.info-label{color:#8b949e}.info-value{font-weight:600}button{width:100%;padding:14px;background:#238636;color:#fff;border:none;border-radius:8px;font-size:16px;font-weight:600;cursor:pointer}button:hover{background:#2ea043}button:disabled{background:#21262d;color:#484f58;cursor:not-allowed}.status{text-align:center;margin-top:16px;font-size:14px;color:#8b949e}.error{color:#f85149;margin-top:12px;text-align:center;font-size:14px}
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🔒 PermRepo NFT</h1>
+    <p class="subtitle">Izveidot NFT savam repozitorijam</p>
+    <div class="info-row"><span class="info-label">Repo</span><span class="info-value" id="repo">-</span></div>
+    <div class="info-row"><span class="info-label">Maksa</span><span class="info-value">Bezmaksas</span></div>
+    <button id="btn" disabled>⏳ Gaida savienojumu...</button>
+    <div class="status" id="status"></div>
+    <div class="error" id="error"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js" crossorigin="anonymous"></script>
+<script>
+const NFT_ADDRESS = '0x...';
+const CHAIN_ID = '0x14a34';
+const params = new URLSearchParams(location.search);
+const repo = params.get('repo') || '';
+document.getElementById('repo').textContent = repo || '-';
+
+const ABI = ["function mintRepository(address,string) external returns(uint256)"];
+
+async function init() {
+    if (!window.ethereum) { document.getElementById('error').textContent='❌ Instalē MetaMask'; return; }
+    try {
+        await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] });
+        const p = new ethers.BrowserProvider(ethereum);
+        const signer = await p.getSigner();
+        const contract = new ethers.Contract(NFT_ADDRESS, ABI, signer);
+        document.getElementById('btn').disabled = false;
+        document.getElementById('btn').textContent = '🔒 Izveidot NFT';
+        document.getElementById('btn').onclick = async () => {
+            try {
+                document.getElementById('btn').disabled = true;
+                document.getElementById('btn').textContent = '⏳ Gaida...';
+                const userAddress = await signer.getAddress();
+                const tx = await contract.mintRepository(userAddress, repo);
+                await tx.wait();
+                document.getElementById('status').textContent = '✅ NFT izveidots!';
+                document.getElementById('btn').textContent = '✅ Gatavs';
+            } catch(e) {
+                document.getElementById('error').textContent = '❌ ' + e.message;
+                document.getElementById('btn').disabled = false;
+                document.getElementById('btn').textContent = '🔒 Izveidot NFT';
+            }
+        };
+        document.getElementById('status').textContent = '✅ Savienots (Base Sepolia)';
+    } catch(e) { document.getElementById('error').textContent = '❌ Kļūda: ' + e.message; }
+}
+init();
+</script>
+</body>
+</html>

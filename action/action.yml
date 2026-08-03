@@ -1,0 +1,37 @@
+name: 'PermRepo — Mūžīgs Arweave Backups'
+description: 'Inkrementāls Git repo backups uz Arweave visām CI platformām'
+author: 'PermRepo'
+branding:
+  icon: 'archive'
+  color: 'green'
+inputs:
+  wallet_address:
+    description: 'Tava maka publiskā adrese'
+    required: true
+  subscription_address:
+    description: 'Subscription līguma adrese'
+    required: true
+  nft_address:
+    description: 'NFT līguma adrese'
+    required: true
+  registry_address:
+    description: 'Registry līguma adrese'
+    required: true
+  rpc_url:
+    description: 'Base RPC URL'
+    required: false
+    default: 'https://sepolia.base.org'
+  turbo_upload_url:
+    description: 'Turbo Upload URL'
+    required: false
+    default: 'https://upload.services.ar-io.dev'
+  turbo_payment_url:
+    description: 'Turbo Payment URL'
+    required: false
+    default: 'https://payment.services.ar-io.dev'
+outputs:
+  status:
+    description: 'Backupa statuss'
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
