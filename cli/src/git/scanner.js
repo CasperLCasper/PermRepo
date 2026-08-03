@@ -131,35 +131,55 @@ function saveLock(repoPath, unchanged, uploaded) {
 }
 
 /**
- * Iegūst repo nosaukumu no Git remote URL
+ * Iegūst repo nosaukumu no vides mainīgajiem vai .git/config faila
+ * Neizmanto child_process.execSync — drošāk
  * @param {string} repoPath - Repozitorija saknes ceļš
  * @returns {string} Repo nosaukums (lietotajs/repo)
  */
 function getRepoName(repoPath) {
-    // Pārbauda, vai ceļš eksistē un ir direktorija
-    let isValidPath = false;
+    // 1. GitHub Actions vidē — izmanto GITHUB_REPOSITORY
+    if (process.env.GITHUB_REPOSITORY) {
+        return process.env.GITHUB_REPOSITORY;
+    }
+
+    // 2. GitLab CI vidē — izmanto CI_PROJECT_PATH
+    if (process.env.CI_PROJECT_PATH) {
+        return process.env.CI_PROJECT_PATH;
+    }
+
+    // 3. Bitbucket vidē — izmanto BITBUCKET_REPO_FULL_NAME
+    if (process.env.BITBUCKET_REPO_FULL_NAME) {
+        return process.env.BITBUCKET_REPO_FULL_NAME;
+    }
+
+    // 4. Mēģina nolasīt no .git/config faila
+    const gitConfigPath = path.join(repoPath, '.git', 'config');
+    if (fs.existsSync(gitConfigPath)) {
+        try {
+            const configContent = fs.readFileSync(gitConfigPath, 'utf-8');
+            const urlMatch = configContent.match(/url = (.+)/);
+            if (urlMatch) {
+                const remoteUrl = urlMatch[1].trim();
+                const repoMatch = remoteUrl.match(/[:/]([^/]+\/[^/]+?)(\.git)?$/);
+                if (repoMatch) {
+                    return repoMatch[1];
+                }
+            }
+        } catch (error) {
+            // Klusām turpinām
+        }
+    }
+
+    // 5. Fallback — direktorijas nosaukums
     try {
-        isValidPath = fs.existsSync(repoPath) && fs.statSync(repoPath).isDirectory();
+        if (fs.existsSync(repoPath) && fs.statSync(repoPath).isDirectory()) {
+            return path.basename(repoPath);
+        }
     } catch (error) {
-        // Ceļš nav derīgs
+        // Klusām turpinām
     }
 
-    if (!isValidPath) {
-        return path.basename(repoPath);
-    }
-
-    try {
-        // Izmanto git komandu tikai, ja ceļš ir validēts
-        const remote = require('child_process')
-            .execSync('git remote get-url origin', { cwd: repoPath, timeout: 5000 })
-            .toString().trim();
-
-        const match = remote.match(/[:/]([^/]+\/[^/]+?)(\.git)?$/);
-        return match ? match[1] : path.basename(repoPath);
-    } catch (error) {
-        // Nav git repo vai cita kļūda
-        return path.basename(repoPath);
-    }
+    return 'unknown-repo';
 }
 
 module.exports = { scanFiles, compareWithLock, saveLock, getRepoName };
