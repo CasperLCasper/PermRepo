@@ -160,7 +160,8 @@ function getRepoName(repoPath) {
             const urlMatch = configContent.match(/url = (.+)/);
             if (urlMatch) {
                 const remoteUrl = urlMatch[1].trim();
-                const repoMatch = remoteUrl.match(/[:/]([^/]+\/[^/]+?)(\.git)?$/);
+                // Vienkāršota regex — bez backtracking
+                const repoMatch = remoteUrl.match(/\/([^/]+\/[^/]+?)(\.git)?$/);
                 if (repoMatch) {
                     return repoMatch[1];
                 }
