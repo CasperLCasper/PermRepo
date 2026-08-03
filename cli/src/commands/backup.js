@@ -59,6 +59,16 @@ async function backup(opts) {
     const manifest = createManifest(unchanged, results, repoName);
     const manifestTxId = await uploader.uploadManifest(manifest, repoName);
 
+    // 6a. Saglabā manifestu lokāli testēšanai
+    const backupDir = path.join(repoPath, '.permrepo', 'backups');
+    if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
+    }
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const localManifestPath = path.join(backupDir, `manifest-${timestamp}.json`);
+    fs.writeFileSync(localManifestPath, JSON.stringify(manifest, null, 2));
+    console.log(`📁 Manifests saglabāts lokāli: ${localManifestPath}`);
+
     // 7. Atjaunina NFT (ja ir paraksts)
     const totalSize = Object.values(results).reduce((s, f) => s + f.size, 0);
     // Šeit būtu EIP712 paraksta loģika
@@ -70,6 +80,7 @@ async function backup(opts) {
     console.log(JSON.stringify({
         status: 'success',
         manifestTxId,
+        localManifestPath,
         filesChanged: Object.keys(results).length,
         totalSize
     }));
