@@ -6,7 +6,6 @@ const SUBSCRIPTION_ABI = [
 
 async function checkSubscription(provider, subscriptionAddress, userAddress) {
     if (!subscriptionAddress) throw new Error('Nav norādīta Subscription līguma adrese');
-
     const contract = new ethers.Contract(subscriptionAddress, SUBSCRIPTION_ABI, provider);
     return await contract.isSubscribed(userAddress);
 }
