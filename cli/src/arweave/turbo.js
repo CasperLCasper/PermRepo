@@ -56,17 +56,11 @@ class TurboUploader {
 function getMimeType(filename) {
     const ext = path.extname(filename).toLowerCase();
     const mimeTypes = {
-        '.js': 'application/javascript',
-        '.ts': 'application/typescript',
-        '.json': 'application/json',
-        '.md': 'text/markdown',
-        '.html': 'text/html',
-        '.css': 'text/css',
-        '.sol': 'text/plain',
-        '.yaml': 'application/x-yaml',
-        '.svg': 'image/svg+xml',
-        '.png': 'image/png',
-        '.jpg': 'image/jpeg'
+        '.js': 'application/javascript', '.ts': 'application/typescript',
+        '.json': 'application/json', '.md': 'text/markdown',
+        '.html': 'text/html', '.css': 'text/css', '.sol': 'text/plain',
+        '.yaml': 'application/x-yaml', '.svg': 'image/svg+xml',
+        '.png': 'image/png', '.jpg': 'image/jpeg'
     };
     return mimeTypes[ext] || 'application/octet-stream';
 }
