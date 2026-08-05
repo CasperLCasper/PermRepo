@@ -4,6 +4,7 @@ const path = require('node:path');
 const { scanFiles, compareWithLock, saveLock, getRepoName } = require('../git/scanner');
 const { TurboUploader } = require('../arweave/turbo');
 const { createManifest } = require('../manifest/create');
+const { createMerkleTree } = require('../merkle/tree');
 const { checkSubscription } = require('../blockchain/subscription');
 const { getExistingNFT, updateNFT } = require('../blockchain/nft');
 
@@ -51,43 +52,50 @@ async function backup(opts) {
         return;
     }
 
-    // 5. Izveido manifestu un aprēķina tā hash
-    const manifest = createManifest(unchanged, {}, repoName);
+    // 5. Aprēķina Merkle root no VISIEM failiem (pirms augšupielādes)
+    const allFiles = { ...unchanged, ...changed };
+    const { root: merkleRoot } = createMerkleTree(allFiles);
+
+    // 6. Izveido manifestu un aprēķina tā hash
+    const manifest = createManifest(unchanged, changed, repoName);
     const manifestHash = ethers.id(JSON.stringify(manifest));
 
-    // 6. Pieprasa lietotāja EIP712 parakstu PIRMS augšupielādes
+    // 7. Pieprasa lietotāja EIP712 parakstu PIRMS augšupielādes
     const nonce = await nftContract.getNonce(tokenId);
-    const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 stunda
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
 
     console.log(JSON.stringify({
         status: 'signature_required',
         message: 'Lūdzu, paraksti backupu ar MetaMask pirms augšupielādes',
         tokenId: tokenId.toString(),
         manifestHash: manifestHash,
+        merkleRoot: merkleRoot,
         nonce: nonce.toString(),
         deadline: deadline,
-        signUrl: `https://perma-repo.pages.dev/sign.html?tokenId=${tokenId}&manifestHash=${manifestHash}&nonce=${nonce}&deadline=${deadline}`
+        filesChanged: Object.keys(changed).length,
+        totalFiles: Object.keys(allFiles).length,
+        signUrl: `https://perma-repo.pages.dev/sign.html?tokenId=${tokenId}&manifestHash=${manifestHash}&merkleRoot=${merkleRoot}&nonce=${nonce}&deadline=${deadline}`
     }));
 
-    // 7. Pārbauda, vai paraksts ir sniegts (caur vides mainīgo vai failu)
+    // 8. Pārbauda, vai paraksts ir sniegts
     const signature = process.env.BACKUP_SIGNATURE;
     if (!signature) {
         console.log(JSON.stringify({ status: 'waiting_signature', message: 'Gaida lietotāja parakstu...' }));
         return;
     }
 
-    // 8. Augšupielādē mainītos failus (tikai pēc paraksta saņemšanas)
+    // 9. Augšupielādē mainītos failus (tikai pēc paraksta saņemšanas)
     const uploader = new TurboUploader({
         uploadUrl: opts.turboUpload,
         paymentUrl: opts.turboPayment
     });
     const results = await uploader.uploadChangedFiles(repoPath, changed, repoName);
 
-    // 9. Atjaunina manifestu ar reālajiem TX ID
+    // 10. Atjaunina manifestu ar reālajiem TX ID
     const finalManifest = createManifest(unchanged, results, repoName);
     const manifestTxId = await uploader.uploadManifest(finalManifest, repoName);
 
-    // 10. Saglabā manifestu lokāli testēšanai
+    // 11. Saglabā manifestu lokāli testēšanai
     const backupDir = path.join(repoPath, '.permrepo', 'backups');
     if (!fs.existsSync(backupDir)) {
         fs.mkdirSync(backupDir, { recursive: true });
@@ -97,9 +105,8 @@ async function backup(opts) {
     fs.writeFileSync(localManifestPath, JSON.stringify(finalManifest, null, 2));
     console.log(`📁 Manifests saglabāts lokāli: ${localManifestPath}`);
 
-    // 11. Izsauc addBackup ar lietotāja parakstu
+    // 12. Izsauc addBackup ar lietotāja parakstu
     const totalSize = Object.values(results).reduce((s, f) => s + f.size, 0);
-    const merkleRoot = ethers.ZeroHash; // Vēlāk aizstāt ar īstu Merkle root
 
     try {
         const signer = new ethers.Wallet(process.env.PRIVATE_KEY || ethers.ZeroHash, provider);
@@ -117,13 +124,14 @@ async function backup(opts) {
         console.warn({ warning: 'nft_update_failed', error: error.message });
     }
 
-    // 12. Saglabā lock failu
+    // 13. Saglabā lock failu
     saveLock(repoPath, unchanged, results);
 
     console.log(JSON.stringify({
         status: 'success',
         manifestTxId,
         localManifestPath,
+        merkleRoot,
         filesChanged: Object.keys(results).length,
         totalSize
     }));
