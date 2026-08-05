@@ -9,17 +9,22 @@
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
     <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()">
     <style>
-        *{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh}.container{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:40px;max-width:480px;width:100%;text-align:center}h1{font-size:24px;margin-bottom:8px;color:#79c0ff}.subtitle{color:#b0b8c4;margin-bottom:24px;font-size:14px}.info-row{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #21262d;text-align:left}.info-label{color:#b0b8c4}.info-value{font-weight:600;font-size:12px;word-break:break-all}button{width:100%;padding:20px;background:#238636;color:#fff;border:none;border-radius:8px;font-size:20px;font-weight:600;cursor:pointer;margin-top:24px}button:hover{background:#2ea043}button:disabled{background:#21262d;color:#8b949e;cursor:not-allowed}.status{text-align:center;margin-top:16px;font-size:14px;color:#b0b8c4}.error{color:#f85149;margin-top:12px;text-align:center;font-size:14px}
+        *{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh}.container{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:40px;max-width:480px;width:100%;text-align:center}h1{font-size:24px;margin-bottom:8px;color:#79c0ff}.subtitle{color:#b0b8c4;margin-bottom:24px;font-size:14px}.info-row{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid #21262d;text-align:left}.info-label{color:#b0b8c4}.info-value{font-weight:600;font-size:14px;word-break:break-all}button{width:100%;padding:20px;background:#238636;color:#fff;border:none;border-radius:8px;font-size:20px;font-weight:600;cursor:pointer;margin-top:24px}button:hover{background:#2ea043}button:disabled{background:#21262d;color:#8b949e;cursor:not-allowed}.status{text-align:center;margin-top:16px;font-size:14px;color:#b0b8c4}.error{color:#f85149;margin-top:12px;text-align:center;font-size:14px}
     </style>
 </head>
 <body>
 <div class="container">
-    <h1>✍️ Parakstīt Backupu</h1>
-    <p class="subtitle">Apstiprini backupu ar savu kripto maku</p>
+    <h1>✍️ Autorizēt Backupu</h1>
+    <p class="subtitle">Paraksti ar savu maku, lai pierādītu īpašumtiesības</p>
     
-    <div class="info-row"><span class="info-label">Token ID</span><span class="info-value" id="tokenId">-</span></div>
-    <div class="info-row"><span class="info-label">Failu skaits</span><span class="info-value" id="filesChanged">-</span></div>
-    <div class="info-row"><span class="info-label">Derīgs līdz</span><span class="info-value" id="deadline">-</span></div>
+    <div class="info-row">
+        <span class="info-label">Repo</span>
+        <span class="info-value" id="repo">-</span>
+    </div>
+    <div class="info-row">
+        <span class="info-label">Laika zīmogs</span>
+        <span class="info-value" id="timestamp">-</span>
+    </div>
     
     <button id="signButton" disabled>⏳ Gaida savienojumu...</button>
     <div class="status" id="status"></div>
@@ -29,37 +34,13 @@
 <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js" integrity="sha384-gpR0Q6Hx/O+uevlbpbANbS0LWjbejPV1sqD/8w422l/fW8whGY0EPmKw3uG7ACYP" crossorigin="anonymous"></script>
 <script>
 const params = new URLSearchParams(window.location.search);
-const tokenId = params.get('tokenId');
-const manifestHash = params.get('manifestHash');
-const merkleRoot = params.get('merkleRoot');
-const nonce = params.get('nonce');
-const deadline = params.get('deadline');
-const filesChanged = params.get('filesChanged') || '?';
-
-document.getElementById('tokenId').textContent = tokenId || '-';
-document.getElementById('filesChanged').textContent = filesChanged;
-document.getElementById('deadline').textContent = deadline ? new Date(parseInt(deadline) * 1000).toLocaleString() : '-';
-
-const NFT_ADDRESS = '0x...';
+const repo = params.get('repo') || '';
 const CHAIN_ID = '0x14a34';
 
-const EIP712_DOMAIN = {
-    name: 'PermRepo',
-    version: '1',
-    chainId: 84532,
-    verifyingContract: NFT_ADDRESS
-};
+document.getElementById('repo').textContent = repo || '-';
+document.getElementById('timestamp').textContent = new Date().toLocaleString();
 
-const ADD_BACKUP_TYPE = {
-    AddBackup: [
-        { name: 'tokenId', type: 'uint256' },
-        { name: 'backupNumber', type: 'uint256' },
-        { name: 'manifestHash', type: 'bytes32' },
-        { name: 'merkleRoot', type: 'bytes32' },
-        { name: 'deadline', type: 'uint256' },
-        { name: 'nonce', type: 'uint256' }
-    ]
-};
+let signer, userAddress;
 
 async function init() {
     if (!window.ethereum) {
@@ -67,56 +48,46 @@ async function init() {
         return;
     }
     
-    if (!tokenId || !manifestHash || !merkleRoot || !nonce || !deadline) {
-        document.getElementById('error').textContent = '❌ Trūkst parametru';
-        return;
-    }
-    
     try {
         await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] });
+        const provider = new ethers.BrowserProvider(ethereum);
+        signer = await provider.getSigner();
+        userAddress = await signer.getAddress();
         
         document.getElementById('signButton').disabled = false;
         document.getElementById('signButton').textContent = '✍️ Sign with Crypto Wallet';
-        document.getElementById('signButton').onclick = signBackup;
+        document.getElementById('signButton').onclick = signAndRedirect;
         document.getElementById('status').textContent = '✅ Gatavs parakstīšanai';
     } catch(e) {
         document.getElementById('error').textContent = '❌ Kļūda: ' + e.message;
     }
 }
 
-async function signBackup() {
+async function signAndRedirect() {
     try {
         document.getElementById('signButton').disabled = true;
         document.getElementById('signButton').textContent = '⏳ Gaida parakstu...';
         document.getElementById('status').textContent = 'Lūdzu, apstiprini MetaMask...';
         
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const signer = await provider.getSigner();
+        const timestamp = Math.floor(Date.now() / 1000);
+        const message = `PermRepo Backup Authorization\nRepository: ${repo}\nTimestamp: ${timestamp}\nAddress: ${userAddress}`;
         
-        const backupNumber = 1; // Tiks aizstāts ar reālo no līguma
+        const signature = await signer.signMessage(message);
         
-        const value = {
-            tokenId: tokenId,
-            backupNumber: backupNumber,
-            manifestHash: manifestHash,
-            merkleRoot: merkleRoot,
-            deadline: deadline,
-            nonce: nonce
+        const payload = {
+            address: userAddress,
+            signature: signature,
+            message: message,
+            timestamp: timestamp
         };
         
-        const signature = await signer.signTypedData(
-            EIP712_DOMAIN,
-            ADD_BACKUP_TYPE,
-            value
-        );
+        const encodedPayload = encodeURIComponent(JSON.stringify(payload, null, 2));
+        const issueTitle = `[PermRepo Backup] ${userAddress.substring(0, 10)}...`;
+        const issueUrl = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(issueTitle)}&body=\`\`\`json\n${encodedPayload}\n\`\`\``;
         
-        document.getElementById('status').textContent = '✅ Paraksts veiksmīgs!';
-        document.getElementById('signButton').textContent = '✅ Parakstīts!';
+        document.getElementById('status').textContent = '✅ Paraksts veiksmīgs! Novirzam...';
         
-        // Parāda parakstu (testēšanai)
-        document.getElementById('error').textContent = '';
-        document.getElementById('error').style.color = '#3fb950';
-        document.getElementById('error').textContent = `✓ Paraksts: ${signature.substring(0, 30)}...`;
+        window.location.href = issueUrl;
         
     } catch(e) {
         if (e.code === 'ACTION_REJECTED') {
