@@ -33,19 +33,9 @@ async function run() {
             return;
         }
         
-        // 4. Check on-chain permissions
+        // 4. Get NFT tokenId for this repository
         const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
         
-        const subscriptionABI = ['function isSubscribed(address) view returns (bool)'];
-        const subscriptionContract = new ethers.Contract(process.env.SUBSCRIPTION_ADDRESS, subscriptionABI, provider);
-        const isSubscribed = await subscriptionContract.isSubscribed(address);
-        
-        if (!isSubscribed) {
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Lietotājam nav aktīva abonementa.');
-            return;
-        }
-        
-        // 5. Extract repo name from message
         const repoMatch = message.match(/Repository: (.+)/);
         const repoName = repoMatch ? repoMatch[1] : `${owner}/${repo}`;
         const repoHash = ethers.id(repoName);
@@ -56,6 +46,16 @@ async function run() {
         
         if (tokenId === 0n) {
             await closeIssue(octokit, owner, repo, issueNumber, '❌ Šim repozitorijam nav izveidots NFT.');
+            return;
+        }
+        
+        // 5. Check subscription for THIS NFT (tokenId)
+        const subscriptionABI = ['function isSubscribed(uint256) view returns (bool)'];
+        const subscriptionContract = new ethers.Contract(process.env.SUBSCRIPTION_ADDRESS, subscriptionABI, provider);
+        const isSubscribed = await subscriptionContract.isSubscribed(tokenId);
+        
+        if (!isSubscribed) {
+            await closeIssue(octokit, owner, repo, issueNumber, '❌ Šim NFT nav aktīva abonementa.');
             return;
         }
         
