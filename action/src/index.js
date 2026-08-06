@@ -5,7 +5,7 @@ const { ethers } = require('ethers');
 async function run() {
     const octokit = github.getOctokit(process.env.GITHUB_TOKEN);
     const issueBody = process.env.ISSUE_BODY;
-    const issueNumber = parseInt(process.env.ISSUE_NUMBER);
+    const issueNumber = Number.parseInt(process.env.ISSUE_NUMBER, 10);
     const { owner, repo } = github.context.repo;
     
     try {
