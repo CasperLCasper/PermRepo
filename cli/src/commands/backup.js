@@ -13,13 +13,13 @@ const CONFIG = {
     REGISTRY_ADDRESS: '0x2a5a7F926046BB1A011D9082aB70BF38bfcb9dc9',
     TURBO_UPLOAD_URL: 'https://upload.services.ar-io.dev',
     TURBO_PAYMENT_URL: 'https://payment.services.ar-io.dev',
-    WEB_URL: 'https://perma-repo.pages.dev'
+    WEB_URL: 'https://permrepo.pages.dev'
 };
 
 async function backup(opts) {
     const wallet = process.env.WALLET_ADDRESS;
     if (!wallet) {
-        console.log(JSON.stringify({ status: 'no_wallet', message: 'Nav iestatīts WALLET_ADDRESS GitHub Secrets.' }));
+        console.log('❌ Nav iestatīts WALLET_ADDRESS GitHub Secrets.');
         return;
     }
 
@@ -28,17 +28,18 @@ async function backup(opts) {
     const repoHash = ethers.id(repoName);
     const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
 
+    console.log('🚀 PermRepo — Pārbaude pirms backupa');
+    console.log('=======================================================');
+
     // 1. PĀRBAUDA NFT
     const nftABI = ['function repositoryTokens(bytes32) view returns (uint256)'];
     const nftContract = new ethers.Contract(CONFIG.NFT_ADDRESS, nftABI, provider);
     const tokenId = await nftContract.repositoryTokens(repoHash);
 
     if (tokenId === 0n) {
-        console.log(JSON.stringify({
-            status: 'no_nft',
-            message: 'Nav izveidots NFT šim repozitorijam.',
-            nftUrl: `${CONFIG.WEB_URL}/pay.html?repo=${encodeURIComponent(repoName)}`
-        }));
+        console.log('❌ Nav izveidots NFT šim repozitorijam.');
+        console.log(`🔗 Izveidot NFT: ${CONFIG.WEB_URL}/pay.html?repo=${encodeURIComponent(repoName)}`);
+        console.log('⚠️ Pēc NFT izveides, palaid Action vēlreiz.');
         return;
     }
 
@@ -47,36 +48,31 @@ async function backup(opts) {
     const nftOwnerContract = new ethers.Contract(CONFIG.NFT_ADDRESS, ownerABI, provider);
     const nftOwner = await nftOwnerContract.ownerOf(tokenId);
     if (nftOwner.toLowerCase() !== wallet.toLowerCase()) {
-        console.log(JSON.stringify({
-            status: 'not_owner',
-            message: 'NFT nepieder šim makam.',
-            expectedOwner: nftOwner,
-            providedWallet: wallet
-        }));
+        console.log('❌ NFT nepieder šim makam.');
+        console.log(`NFT īpašnieks: ${nftOwner}`);
+        console.log(`Tavs maks: ${wallet}`);
         return;
     }
+    console.log('✅ NFT atrasts un pieder šim makam.');
 
     // 3. PĀRBAUDA ABONEMENTU
     const subABI = ['function isSubscribed(uint256) view returns (bool)'];
     const subContract = new ethers.Contract(CONFIG.SUBSCRIPTION_ADDRESS, subABI, provider);
     const isSubscribed = await subContract.isSubscribed(tokenId);
     if (!isSubscribed) {
-        console.log(JSON.stringify({
-            status: 'no_subscription',
-            message: `NFT (tokenId: ${tokenId}) nav aktīva abonementa.`,
-            subscribeUrl: `${CONFIG.WEB_URL}/subscribe.html`
-        }));
+        console.log(`❌ NFT (tokenId: ${tokenId}) nav aktīva abonementa.`);
+        console.log(`🔗 Aktivizēt abonementu: ${CONFIG.WEB_URL}/subscribe.html`);
+        console.log('⚠️ Pēc abonementa iegādes, palaid Action vēlreiz.');
         return;
     }
+    console.log('✅ Abonements aktīvs.');
 
     // 4. PĀRBAUDA PARAKSTU
     const issueBody = process.env.ISSUE_BODY;
     if (!issueBody) {
-        console.log(JSON.stringify({
-            status: 'signature_required',
-            message: 'Lūdzu, paraksti backupu ar MetaMask.',
-            signUrl: `${CONFIG.WEB_URL}/sign.html?repo=${encodeURIComponent(repoName)}`
-        }));
+        console.log('✍️ Nepieciešams paraksts, lai veiktu backupu.');
+        console.log(`🔗 Parakstīt: ${CONFIG.WEB_URL}/sign.html?repo=${encodeURIComponent(repoName)}`);
+        console.log('⚠️ Pēc parakstīšanas, palaid Action vēlreiz.');
         return;
     }
 
@@ -84,22 +80,23 @@ async function backup(opts) {
     try {
         const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
         if (!jsonMatch) {
-            console.log(JSON.stringify({ status: 'invalid_signature', message: 'Neizdevās atrast JSON datus.' }));
+            console.log('❌ Neizdevās atrast JSON datus Issue aprakstā.');
             return;
         }
         const payload = JSON.parse(jsonMatch[1]);
         const { signature, message, timestamp } = payload;
         if (Math.floor(Date.now() / 1000) - timestamp > 600) {
-            console.log(JSON.stringify({ status: 'expired_signature', message: 'Paraksts ir novecojis (>10 min).' }));
+            console.log('❌ Paraksts ir novecojis (>10 min). Lūdzu, mēģiniet vēlreiz.');
             return;
         }
         address = ethers.verifyMessage(message, signature);
         if (address.toLowerCase() !== wallet.toLowerCase()) {
-            console.log(JSON.stringify({ status: 'wrong_signer', message: 'Paraksts neatbilst maka adresei.' }));
+            console.log('❌ Paraksts neatbilst maka adresei.');
             return;
         }
+        console.log('✅ Paraksts veiksmīgi verificēts.');
     } catch (error) {
-        console.log(JSON.stringify({ status: 'invalid_signature', message: error.message }));
+        console.log('❌ Kļūda verificējot parakstu:', error.message);
         return;
     }
 
@@ -108,9 +105,10 @@ async function backup(opts) {
     const lockData = loadLock(repoPath);
     const { unchanged, changed } = compareWithLock(currentFiles, lockData);
     if (!Object.keys(changed).length) {
-        console.log(JSON.stringify({ status: 'skipped', reason: 'no_changes' }));
+        console.log('✅ Nav izmaiņu kopš pēdējā backupa.');
         return;
     }
+    console.log(`📊 Mainīti faili: ${Object.keys(changed).length}`);
 
     const allFiles = { ...unchanged, ...changed };
     const { root: merkleRoot } = createMerkleTree(allFiles);
@@ -129,14 +127,12 @@ async function backup(opts) {
     saveLock(repoPath, unchanged, results);
     const totalSize = Object.values(results).reduce((s, f) => s + f.size, 0);
 
-    console.log(JSON.stringify({
-        status: 'success',
-        manifestTxId,
-        localManifestPath: localPath,
-        merkleRoot,
-        filesChanged: Object.keys(results).length,
-        totalSize
-    }));
+    console.log('=======================================================');
+    console.log('✅ BACKUPS VEIKSMĪGS!');
+    console.log(`🔗 Manifests: ar://${manifestTxId}`);
+    console.log(`📊 Faili: ${Object.keys(results).length} mainīti`);
+    console.log(`📦 Izmērs: ${(totalSize / 1024).toFixed(1)} KB`);
+    console.log(`🌳 Merkle root: ${merkleRoot}`);
 }
 
 function loadLock(repoPath) {
