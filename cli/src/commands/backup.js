@@ -32,6 +32,10 @@ async function backup(opts) {
 
     console.log('🚀 PermRepo — Pārbaude pirms backupa');
     console.log('=======================================================');
+    console.log('🔍 DEBUG:');
+    console.log('  repoName:', repoName);
+    console.log('  repoHash:', repoHash);
+    console.log('  wallet:', wallet);
 
     // 1. PĀRBAUDA NFT
     const nftABI = ['function repositoryTokens(bytes32) view returns (uint256)'];
