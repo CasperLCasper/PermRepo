@@ -18,7 +18,7 @@
     
     <div class="info-row text-left">
         <span class="info-label">Repo</span>
-        <span class="info-value" id="repo">-</span>
+        <input type="text" id="repoInput" placeholder="piem., lietotajs/repo" value="" style="width:100%;padding:8px;margin-top:4px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#e6edf3;">
     </div>
     <div class="info-row text-left">
         <span class="info-label">Laika zīmogs</span>
@@ -33,10 +33,10 @@
 <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js" integrity="sha384-gpR0Q6Hx/O+uevlbpbANbS0LWjbejPV1sqD/8w422l/fW8whGY0EPmKw3uG7ACYP" crossorigin="anonymous"></script>
 <script>
 const params = new URLSearchParams(window.location.search);
-const repo = params.get('repo') || '';
+const repoFromUrl = params.get('repo') || '';
 const CHAIN_ID = '0x14a34';
 
-document.getElementById('repo').textContent = repo || '-';
+document.getElementById('repoInput').value = repoFromUrl;
 document.getElementById('timestamp').textContent = new Date().toLocaleString();
 
 let signer, userAddress;
@@ -63,6 +63,12 @@ async function init() {
 }
 
 async function signAndRedirect() {
+    const repo = document.getElementById('repoInput').value.trim();
+    if (!repo) {
+        document.getElementById('error').textContent = '❌ Lūdzu, ievadi repozitorija nosaukumu';
+        return;
+    }
+    
     try {
         document.getElementById('signButton').disabled = true;
         document.getElementById('signButton').textContent = '⏳ Gaida parakstu...';
