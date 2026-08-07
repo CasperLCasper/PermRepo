@@ -26,7 +26,7 @@
         <span class="info-value">Bezmaksas</span>
     </div>
     
-    <button id="btn" class="sign-button" disabled>⏳ Gaida savienojumu...</button>
+    <button id="mintButton" class="sign-button" disabled>⏳ Gaida savienojumu...</button>
     <div class="status" id="status"></div>
     <div class="error" id="error"></div>
 </div>
@@ -42,6 +42,8 @@ document.getElementById('repoInput').value = repoFromUrl;
 
 const ABI = ["function mintRepository(address,string) external returns(uint256)"];
 
+let signer, userAddress;
+
 async function init() {
     if (!window.ethereum) {
         document.getElementById('error').textContent = '❌ Instalē MetaMask vai citu kripto maku';
@@ -51,12 +53,12 @@ async function init() {
     try {
         await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] });
         const provider = new ethers.BrowserProvider(ethereum);
-        const signer = await provider.getSigner();
-        const contract = new ethers.Contract(NFT_ADDRESS, ABI, signer);
+        signer = await provider.getSigner();
+        userAddress = await signer.getAddress();
         
-        document.getElementById('btn').disabled = false;
-        document.getElementById('btn').textContent = '🔒 Izveidot NFT';
-        document.getElementById('btn').onclick = mintNFT;
+        document.getElementById('mintButton').disabled = false;
+        document.getElementById('mintButton').textContent = '🔒 Izveidot NFT';
+        document.getElementById('mintButton').onclick = mintNFT;
         document.getElementById('status').textContent = '✅ Gatavs kalšanai';
     } catch(e) {
         document.getElementById('error').textContent = '❌ Kļūda: ' + e.message;
@@ -71,20 +73,16 @@ async function mintNFT() {
     }
     
     try {
-        document.getElementById('btn').disabled = true;
-        document.getElementById('btn').textContent = '⏳ Gaida...';
+        document.getElementById('mintButton').disabled = true;
+        document.getElementById('mintButton').textContent = '⏳ Gaida parakstu...';
         document.getElementById('status').textContent = 'Lūdzu, apstiprini MetaMask...';
         
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        const signer = await provider.getSigner();
-        const userAddress = await signer.getAddress();
         const contract = new ethers.Contract(NFT_ADDRESS, ABI, signer);
-        
         const tx = await contract.mintRepository(userAddress, repo);
         await tx.wait();
         
         document.getElementById('status').textContent = '✅ NFT izveidots!';
-        document.getElementById('btn').textContent = '✅ Gatavs';
+        document.getElementById('mintButton').textContent = '✅ Gatavs';
         
     } catch(e) {
         if (e.code === 'ACTION_REJECTED') {
@@ -92,8 +90,8 @@ async function mintNFT() {
         } else {
             document.getElementById('error').textContent = '❌ Kļūda: ' + e.message;
         }
-        document.getElementById('btn').disabled = false;
-        document.getElementById('btn').textContent = '🔒 Izveidot NFT';
+        document.getElementById('mintButton').disabled = false;
+        document.getElementById('mintButton').textContent = '🔒 Izveidot NFT';
     }
 }
 
