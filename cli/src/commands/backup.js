@@ -26,18 +26,19 @@ async function backup(opts) {
     }
 
     const repoPath = path.resolve(opts.repo || '.');
-    const repoName = getRepoName(repoPath);
+    let repoName = getRepoName(repoPath);
+    repoName = repoName.trim().replace(/\s+/g, ' ');
     const repoHash = ethers.id(repoName);
     const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
 
     console.log('🚀 PermRepo — Pārbaude pirms backupa');
     console.log('=======================================================');
     console.log('🔍 DEBUG:');
-    console.log('  repoName:', repoName);
+    console.log('  repoName:', JSON.stringify(repoName));
+    console.log('  repoName length:', repoName.length);
     console.log('  repoHash:', repoHash);
     console.log('  wallet:', wallet);
 
-    // 1. PĀRBAUDA NFT
     const nftABI = ['function repositoryTokens(bytes32) view returns (uint256)'];
     const nftContract = new ethers.Contract(CONFIG.NFT_ADDRESS, nftABI, provider);
     const tokenId = await nftContract.repositoryTokens(repoHash);
@@ -49,7 +50,6 @@ async function backup(opts) {
         return;
     }
 
-    // 2. PĀRBAUDA NFT ĪPAŠUMTIESĪBAS
     const ownerABI = ['function ownerOf(uint256) view returns (address)'];
     const nftOwnerContract = new ethers.Contract(CONFIG.NFT_ADDRESS, ownerABI, provider);
     const nftOwner = await nftOwnerContract.ownerOf(tokenId);
@@ -61,7 +61,6 @@ async function backup(opts) {
     }
     console.log('✅ NFT atrasts un pieder šim makam.');
 
-    // 3. PĀRBAUDA ABONEMENTU
     const subABI = ['function isSubscribed(uint256) view returns (bool)'];
     const subContract = new ethers.Contract(CONFIG.SUBSCRIPTION_ADDRESS, subABI, provider);
     const isSubscribed = await subContract.isSubscribed(tokenId);
@@ -73,7 +72,6 @@ async function backup(opts) {
     }
     console.log('✅ Abonements aktīvs.');
 
-    // 4. PĀRBAUDA PARAKSTU
     const issueBody = process.env.ISSUE_BODY;
     if (!issueBody) {
         console.log('✍️ Nepieciešams paraksts, lai veiktu backupu.');
@@ -106,7 +104,6 @@ async function backup(opts) {
         return;
     }
 
-    // 5. SKENĒ UN AUGŠUPIELĀDĒ
     const currentFiles = scanFiles(repoPath);
     const lockData = loadLock(repoPath);
     const { unchanged, changed } = compareWithLock(currentFiles, lockData);
