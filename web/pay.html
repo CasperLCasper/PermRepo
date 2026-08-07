@@ -16,19 +16,24 @@
 <div class="container">
     <h1>🔒 PermRepo NFT</h1>
     <p class="subtitle">Izveidot NFT savam repozitorijam</p>
-    <div class="info-row"><span class="info-label">Repo</span><span class="info-value" id="repo">-</span></div>
+    
+    <div class="info-row">
+        <span class="info-label">Repo</span>
+        <input type="text" id="repoInput" placeholder="piem., lietotajs/repo" value="" style="width:60%;padding:4px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#e6edf3;">
+    </div>
     <div class="info-row"><span class="info-label">Maksa</span><span class="info-value">Bezmaksas</span></div>
+    
     <button id="btn" disabled>⏳ Gaida savienojumu...</button>
     <div class="status" id="status"></div>
     <div class="error" id="error"></div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js" integrity="sha384-gpR0Q6Hx/O+uevlbpbANbS0LWjbejPV1sqD/8w422l/fW8whGY0EPmKw3uG7ACYP" crossorigin="anonymous"></script>
 <script>
-const NFT_ADDRESS = '0x...';
+const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
 const CHAIN_ID = '0x14a34';
 const params = new URLSearchParams(location.search);
-const repo = params.get('repo') || '';
-document.getElementById('repo').textContent = repo || '-';
+const repoFromUrl = params.get('repo') || '';
+document.getElementById('repoInput').value = repoFromUrl;
 
 const ABI = ["function mintRepository(address,string) external returns(uint256)"];
 
@@ -45,6 +50,11 @@ async function init() {
         document.getElementById('btn').disabled = false;
         document.getElementById('btn').textContent = '🔒 Izveidot NFT';
         document.getElementById('btn').onclick = async () => {
+            const repo = document.getElementById('repoInput').value.trim();
+            if (!repo) {
+                document.getElementById('error').textContent = '❌ Lūdzu, ievadi repozitorija nosaukumu';
+                return;
+            }
             try {
                 document.getElementById('btn').disabled = true;
                 document.getElementById('btn').textContent = '⏳ Gaida...';
