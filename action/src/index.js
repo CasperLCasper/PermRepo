@@ -2,6 +2,18 @@ const core = require('@actions/core');
 const github = require('@actions/github');
 const { ethers } = require('ethers');
 
+// ============================================
+// PERMAREPO KONFIGURĀCIJA (iekodēta — nav jāmaina)
+// ============================================
+const CONFIG = {
+    RPC_URL: 'https://sepolia.base.org',
+    SUBSCRIPTION_ADDRESS: '0x29f1ed42C6C2E157B7571f9585a9C9Dd6fBcda51',
+    NFT_ADDRESS: '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4',
+    REGISTRY_ADDRESS: '0x2a5a7F926046BB1A011D9082aB70BF38bfcb9dc9',
+    TURBO_UPLOAD_URL: 'https://upload.services.ar-io.dev',
+    TURBO_PAYMENT_URL: 'https://payment.services.ar-io.dev'
+};
+
 async function run() {
     const octokit = github.getOctokit(process.env.GITHUB_TOKEN);
     const issueBody = process.env.ISSUE_BODY;
@@ -34,14 +46,14 @@ async function run() {
         }
         
         // 4. Get NFT tokenId for this repository
-        const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+        const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
         
         const repoMatch = message.match(/Repository: (.+)/);
         const repoName = repoMatch ? repoMatch[1] : `${owner}/${repo}`;
         const repoHash = ethers.id(repoName);
         
         const nftABI = ['function repositoryTokens(bytes32) view returns (uint256)'];
-        const nftContract = new ethers.Contract(process.env.NFT_ADDRESS, nftABI, provider);
+        const nftContract = new ethers.Contract(CONFIG.NFT_ADDRESS, nftABI, provider);
         const tokenId = await nftContract.repositoryTokens(repoHash);
         
         if (tokenId === 0n) {
@@ -51,7 +63,7 @@ async function run() {
         
         // 5. Check subscription for THIS NFT (tokenId)
         const subscriptionABI = ['function isSubscribed(uint256) view returns (bool)'];
-        const subscriptionContract = new ethers.Contract(process.env.SUBSCRIPTION_ADDRESS, subscriptionABI, provider);
+        const subscriptionContract = new ethers.Contract(CONFIG.SUBSCRIPTION_ADDRESS, subscriptionABI, provider);
         const isSubscribed = await subscriptionContract.isSubscribed(tokenId);
         
         if (!isSubscribed) {
@@ -64,12 +76,12 @@ async function run() {
         const cmd = [
             'npx perm-repo backup',
             `--wallet ${address}`,
-            `--subscription ${process.env.SUBSCRIPTION_ADDRESS}`,
-            `--nft ${process.env.NFT_ADDRESS}`,
-            `--registry ${process.env.REGISTRY_ADDRESS}`,
-            `--rpc ${process.env.RPC_URL}`,
-            `--turbo-upload ${process.env.TURBO_UPLOAD_URL}`,
-            `--turbo-payment ${process.env.TURBO_PAYMENT_URL}`,
+            `--subscription ${CONFIG.SUBSCRIPTION_ADDRESS}`,
+            `--nft ${CONFIG.NFT_ADDRESS}`,
+            `--registry ${CONFIG.REGISTRY_ADDRESS}`,
+            `--rpc ${CONFIG.RPC_URL}`,
+            `--turbo-upload ${CONFIG.TURBO_UPLOAD_URL}`,
+            `--turbo-payment ${CONFIG.TURBO_PAYMENT_URL}`,
             '--repo .'
         ].join(' ');
         
