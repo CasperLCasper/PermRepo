@@ -2,11 +2,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
-/**
- * Skenē visus failus direktorijā un aprēķina SHA-256 hešus
- * @param {string} rootPath - Repozitorija saknes ceļš
- * @returns {Object} { "relatīvais/ceļš": { hash, size } }
- */
 function scanFiles(rootPath) {
     const files = {};
     const ignore = [
@@ -58,12 +53,6 @@ function scanFiles(rootPath) {
     return files;
 }
 
-/**
- * Salīdzina pašreizējos failus ar lock faila datiem
- * @param {Object} current - Pašreizējie faili
- * @param {Object} lock - Lock faila dati
- * @returns {Object} { unchanged, changed, deleted }
- */
 function compareWithLock(current, lock = {}) {
     const unchanged = {};
     const changed = {};
@@ -86,12 +75,6 @@ function compareWithLock(current, lock = {}) {
     return { unchanged, changed, deleted };
 }
 
-/**
- * Saglabā lock failu ar jaunajiem TX ID
- * @param {string} repoPath - Repozitorija saknes ceļš
- * @param {Object} unchanged - Nemainītie faili
- * @param {Object} uploaded - Augšupielādētie faili
- */
 function saveLock(repoPath, unchanged, uploaded) {
     const files = {};
 
@@ -130,25 +113,22 @@ function saveLock(repoPath, unchanged, uploaded) {
     }
 }
 
-/**
- * Iegūst repo nosaukumu no vides mainīgajiem vai .git/config faila
- * Neizmanto child_process.execSync — drošāk
- * @param {string} repoPath - Repozitorija saknes ceļš
- * @returns {string} Repo nosaukums (lietotajs/repo)
- */
 function getRepoName(repoPath) {
     // 1. GitHub Actions vidē — izmanto GITHUB_REPOSITORY
     if (process.env.GITHUB_REPOSITORY) {
+        console.log('DEBUG getRepoName: using GITHUB_REPOSITORY:', process.env.GITHUB_REPOSITORY);
         return process.env.GITHUB_REPOSITORY;
     }
 
     // 2. GitLab CI vidē — izmanto CI_PROJECT_PATH
     if (process.env.CI_PROJECT_PATH) {
+        console.log('DEBUG getRepoName: using CI_PROJECT_PATH:', process.env.CI_PROJECT_PATH);
         return process.env.CI_PROJECT_PATH;
     }
 
     // 3. Bitbucket vidē — izmanto BITBUCKET_REPO_FULL_NAME
     if (process.env.BITBUCKET_REPO_FULL_NAME) {
+        console.log('DEBUG getRepoName: using BITBUCKET_REPO_FULL_NAME:', process.env.BITBUCKET_REPO_FULL_NAME);
         return process.env.BITBUCKET_REPO_FULL_NAME;
     }
 
@@ -160,8 +140,10 @@ function getRepoName(repoPath) {
             const urlMatch = configContent.match(/url = (.+)/);
             if (urlMatch) {
                 const remoteUrl = urlMatch[1].trim();
+                console.log('DEBUG getRepoName: from .git/config remoteUrl:', remoteUrl);
                 const repoMatch = remoteUrl.match(/\/([^/]+\/[^/]+?)(\.git)?$/);
                 if (repoMatch) {
+                    console.log('DEBUG getRepoName: from .git/config result:', repoMatch[1]);
                     return repoMatch[1];
                 }
             }
@@ -173,12 +155,15 @@ function getRepoName(repoPath) {
     // 5. Fallback — direktorijas nosaukums
     try {
         if (fs.existsSync(repoPath) && fs.statSync(repoPath).isDirectory()) {
-            return path.basename(repoPath);
+            const fallback = path.basename(repoPath);
+            console.log('DEBUG getRepoName: fallback:', fallback);
+            return fallback;
         }
     } catch (error) {
         console.warn({ warning: 'cannot_read_directory', path: repoPath, error: error.message });
     }
 
+    console.log('DEBUG getRepoName: unknown-repo');
     return 'unknown-repo';
 }
 
