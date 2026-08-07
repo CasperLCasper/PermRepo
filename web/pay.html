@@ -15,11 +15,11 @@
 <body>
 <div class="container text-center">
     <h1>🔒 PermRepo NFT</h1>
-    <p class="subtitle">Izveidot NFT savam repozitorijam</p>
+    <p class="subtitle">Ielīmē GitHub repozitorija URL vai nosaukumu</p>
     
     <div class="info-row text-left">
         <span class="info-label">Repo</span>
-        <input type="text" id="repoInput" placeholder="piem., lietotajs/repo" value="" style="width:100%;padding:8px;margin-top:4px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#e6edf3;">
+        <input type="text" id="repoInput" placeholder="https://github.com/lietotajs/repo" value="" style="width:100%;padding:8px;margin-top:4px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#e6edf3;">
     </div>
     <div class="info-row text-left">
         <span class="info-label">Maksa</span>
@@ -37,7 +37,6 @@ const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
 const CHAIN_ID = '0x14a34';
 const params = new URLSearchParams(window.location.search);
 const repoFromUrl = params.get('repo') || '';
-
 document.getElementById('repoInput').value = repoFromUrl;
 
 const ABI = ["function mintRepository(address,string) external returns(uint256)"];
@@ -57,7 +56,7 @@ async function init() {
         userAddress = await signer.getAddress();
         
         document.getElementById('mintButton').disabled = false;
-        document.getElementById('mintButton').textContent = '🔒 Izveidot NFT';
+        document.getElementById('mintButton').textContent = '🔒 Generate NFT';
         document.getElementById('mintButton').onclick = mintNFT;
         document.getElementById('status').textContent = '✅ Gatavs kalšanai';
     } catch(e) {
@@ -65,23 +64,48 @@ async function init() {
     }
 }
 
+function extractRepoName(input) {
+    if (!input) return null;
+    input = input.trim();
+    
+    // https://github.com/lietotajs/repo
+    let match = input.match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/);
+    if (match) return match[1];
+    
+    // https://gitlab.com/lietotajs/repo
+    match = input.match(/gitlab\.com\/([^/]+\/[^/]+?)(?:\.git)?$/);
+    if (match) return match[1];
+    
+    // bitbucket.org/lietotajs/repo
+    match = input.match(/bitbucket\.org\/([^/]+\/[^/]+?)(?:\.git)?$/);
+    if (match) return match[1];
+    
+    // Ja nav URL, izmanto tieši ievadīto tekstu (lietotajs/repo)
+    if (input.includes('/') && input.length >= 3) return input;
+    
+    return null;
+}
+
 async function mintNFT() {
-    const repo = document.getElementById('repoInput').value.trim();
+    const rawInput = document.getElementById('repoInput').value;
+    const repo = extractRepoName(rawInput);
+    
     if (!repo) {
-        document.getElementById('error').textContent = '❌ Lūdzu, ievadi repozitorija nosaukumu';
+        document.getElementById('error').textContent = '❌ Nevarēja noteikt repozitorija nosaukumu. Ievadi URL vai lietotajs/repo';
         return;
     }
     
     try {
         document.getElementById('mintButton').disabled = true;
-        document.getElementById('mintButton').textContent = '⏳ Gaida parakstu...';
-        document.getElementById('status').textContent = 'Lūdzu, apstiprini MetaMask...';
+        document.getElementById('mintButton').textContent = '⏳ Gaida...';
+        document.getElementById('status').textContent = `Veido NFT priekš: ${repo}`;
+        document.getElementById('error').textContent = '';
         
         const contract = new ethers.Contract(NFT_ADDRESS, ABI, signer);
         const tx = await contract.mintRepository(userAddress, repo);
         await tx.wait();
         
-        document.getElementById('status').textContent = '✅ NFT izveidots!';
+        document.getElementById('status').textContent = `✅ NFT izveidots priekš: ${repo}`;
         document.getElementById('mintButton').textContent = '✅ Gatavs';
         
     } catch(e) {
@@ -91,7 +115,7 @@ async function mintNFT() {
             document.getElementById('error').textContent = '❌ Kļūda: ' + e.message;
         }
         document.getElementById('mintButton').disabled = false;
-        document.getElementById('mintButton').textContent = '🔒 Izveidot NFT';
+        document.getElementById('mintButton').textContent = '🔒 Generate NFT';
     }
 }
 
