@@ -1,8 +1,11 @@
 const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
 const CHAIN_ID = '0x14a34';
 const params = new URLSearchParams(window.location.search);
-const repoFromUrl = params.get('repo') || '';
-document.getElementById('repoInput').value = repoFromUrl;
+const repo = params.get('repo') || '';
+
+if (repo) {
+    document.getElementById('repoInput').value = repo;
+}
 
 const ABI = ["function mintRepository(address,string) external returns(uint256)"];
 
@@ -29,30 +32,11 @@ async function init() {
     }
 }
 
-function extractRepoName(input) {
-    if (!input) return null;
-    input = input.trim();
-    
-    let match = input.match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/);
-    if (match) return match[1];
-    
-    match = input.match(/gitlab\.com\/([^/]+\/[^/]+?)(?:\.git)?$/);
-    if (match) return match[1];
-    
-    match = input.match(/bitbucket\.org\/([^/]+\/[^/]+?)(?:\.git)?$/);
-    if (match) return match[1];
-    
-    if (input.includes('/') && input.length >= 3) return input;
-    
-    return null;
-}
-
 async function mintNFT() {
-    const rawInput = document.getElementById('repoInput').value;
-    const repo = extractRepoName(rawInput);
+    const repo = document.getElementById('repoInput').value.trim();
     
     if (!repo) {
-        document.getElementById('error').textContent = '❌ Nevarēja noteikt repozitorija nosaukumu. Ievadi URL vai lietotajs/repo';
+        document.getElementById('error').textContent = '❌ Nav norādīts repozitorija nosaukums. Izmanto ?repo=lietotajs/repo';
         return;
     }
     
