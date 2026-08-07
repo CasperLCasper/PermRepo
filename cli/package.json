@@ -1,6 +1,6 @@
 {
   "name": "perm-repo",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "description": "Mūžīgs Git repo backups uz Arweave — CLI visām CI platformām",
   "main": "src/index.js",
   "bin": {
