@@ -5,135 +5,165 @@ const { scanFiles, compareWithLock, saveLock, getRepoName } = require('../git/sc
 const { TurboUploader } = require('../arweave/turbo');
 const { createManifest } = require('../manifest/create');
 const { createMerkleTree } = require('../merkle/tree');
-const { checkSubscription } = require('../blockchain/subscription');
-const { getExistingNFT, updateNFT } = require('../blockchain/nft');
+
+// ============================================
+// PERMAREPO KONFIGURĀCIJA (iekodēta)
+// ============================================
+const CONFIG = {
+    RPC_URL: 'https://sepolia.base.org',
+    SUBSCRIPTION_ADDRESS: '0x29f1ed42C6C2E157B7571f9585a9C9Dd6fBcda51',
+    NFT_ADDRESS: '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4',
+    REGISTRY_ADDRESS: '0x2a5a7F926046BB1A011D9082aB70BF38bfcb9dc9',
+    TURBO_UPLOAD_URL: 'https://upload.services.ar-io.dev',
+    TURBO_PAYMENT_URL: 'https://payment.services.ar-io.dev',
+    WEB_URL: 'https://perma-repo.pages.dev'
+};
 
 async function backup(opts) {
-    const wallet = opts.wallet;
-    if (!wallet) throw new Error('Nepieciešama maka adrese (-w)');
-
     const repoPath = path.resolve(opts.repo || '.');
     const repoName = getRepoName(repoPath);
     const repoHash = ethers.id(repoName);
-
-    const provider = new ethers.JsonRpcProvider(opts.rpc);
-
-    // 1. Pārbauda abonementu
-    const subscribed = await checkSubscription(provider, opts.subscription, wallet);
-    if (!subscribed) {
-        console.log(JSON.stringify({ status: 'no_subscription', message: 'Nav aktīva abonementa' }));
-        return;
-    }
-
-    // 2. Pārbauda NFT
-    const tokenId = await getExistingNFT(provider, opts.nft, repoHash);
+    
+    const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
+    
+    // ============================================
+    // 1. PĀRBAUDA NFT
+    // ============================================
+    const nftABI = ['function repositoryTokens(bytes32) view returns (uint256)'];
+    const nftContract = new ethers.Contract(CONFIG.NFT_ADDRESS, nftABI, provider);
+    const tokenId = await nftContract.repositoryTokens(repoHash);
+    
     if (tokenId === 0n) {
-        console.log(JSON.stringify({ status: 'no_nft', message: 'Nav izveidots NFT šim repo' }));
+        const nftUrl = `${CONFIG.WEB_URL}/pay.html?repo=${encodeURIComponent(repoName)}`;
+        console.log(JSON.stringify({
+            status: 'no_nft',
+            message: 'Nav izveidots NFT šim repozitorijam.',
+            nftUrl: nftUrl,
+            action: 'Izveido NFT un palaid Action vēlreiz.'
+        }));
         return;
     }
-
-    // 3. Pārbauda NFT īpašumtiesības
-    const nftContract = new ethers.Contract(opts.nft, [
-        'function ownerOf(uint256) view returns (address)',
-        'function getNonce(uint256) view returns (uint256)'
-    ], provider);
-    const owner = await nftContract.ownerOf(tokenId);
-    if (owner.toLowerCase() !== wallet.toLowerCase()) {
-        throw new Error('NFT nepieder šim makam');
+    
+    // ============================================
+    // 2. PĀRBAUDA ABONEMENTU
+    // ============================================
+    const subscriptionABI = ['function isSubscribed(uint256) view returns (bool)'];
+    const subscriptionContract = new ethers.Contract(CONFIG.SUBSCRIPTION_ADDRESS, subscriptionABI, provider);
+    const isSubscribed = await subscriptionContract.isSubscribed(tokenId);
+    
+    if (!isSubscribed) {
+        const subscribeUrl = `${CONFIG.WEB_URL}/subscribe.html`;
+        console.log(JSON.stringify({
+            status: 'no_subscription',
+            message: `NFT (tokenId: ${tokenId}) nav aktīva abonementa.`,
+            subscribeUrl: subscribeUrl,
+            action: 'Nopērc abonementu un palaid Action vēlreiz.'
+        }));
+        return;
     }
-
-    // 4. Skenē failus
+    
+    // ============================================
+    // 3. PĀRBAUDA, VAI IR PARAKSTS (no GitHub Issue)
+    // ============================================
+    const issueBody = process.env.ISSUE_BODY;
+    if (!issueBody) {
+        console.log(JSON.stringify({
+            status: 'signature_required',
+            message: 'Lūdzu, paraksti backupu ar MetaMask.',
+            signUrl: `${CONFIG.WEB_URL}/sign.html?repo=${encodeURIComponent(repoName)}`
+        }));
+        return;
+    }
+    
+    // ============================================
+    // 4. VERIFICĒ PARAKSTU
+    // ============================================
+    let address;
+    try {
+        const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
+        if (!jsonMatch) {
+            console.log(JSON.stringify({ status: 'invalid_signature', message: 'Neizdevās atrast JSON datus.' }));
+            return;
+        }
+        
+        const payload = JSON.parse(jsonMatch[1]);
+        const { signature, message, timestamp } = payload;
+        
+        // Timestamp check
+        const now = Math.floor(Date.now() / 1000);
+        if (now - timestamp > 600) {
+            console.log(JSON.stringify({ status: 'expired_signature', message: 'Paraksts ir novecojis (>10 min).' }));
+            return;
+        }
+        
+        // Verify signature
+        address = ethers.verifyMessage(message, signature);
+    } catch (error) {
+        console.log(JSON.stringify({ status: 'invalid_signature', message: error.message }));
+        return;
+    }
+    
+    // ============================================
+    // 5. SKENĒ FAILUS
+    // ============================================
     const currentFiles = scanFiles(repoPath);
     const lockData = loadLock(repoPath);
     const { unchanged, changed } = compareWithLock(currentFiles, lockData);
-
+    
     if (!Object.keys(changed).length) {
         console.log(JSON.stringify({ status: 'skipped', reason: 'no_changes' }));
         return;
     }
-
-    // 5. Aprēķina Merkle root no VISIEM failiem (pirms augšupielādes)
+    
+    // ============================================
+    // 6. APRĒĶINA MERKLE ROOT
+    // ============================================
     const allFiles = { ...unchanged, ...changed };
     const { root: merkleRoot } = createMerkleTree(allFiles);
-
-    // 6. Izveido manifestu un aprēķina tā hash
-    const manifest = createManifest(unchanged, changed, repoName);
-    const manifestHash = ethers.id(JSON.stringify(manifest));
-
-    // 7. Pieprasa lietotāja EIP712 parakstu PIRMS augšupielādes
-    const nonce = await nftContract.getNonce(tokenId);
-    const deadline = Math.floor(Date.now() / 1000) + 3600;
-
-    console.log(JSON.stringify({
-        status: 'signature_required',
-        message: 'Lūdzu, paraksti backupu ar MetaMask pirms augšupielādes',
-        tokenId: tokenId.toString(),
-        manifestHash: manifestHash,
-        merkleRoot: merkleRoot,
-        nonce: nonce.toString(),
-        deadline: deadline,
-        filesChanged: Object.keys(changed).length,
-        totalFiles: Object.keys(allFiles).length,
-        signUrl: `https://perma-repo.pages.dev/sign.html?tokenId=${tokenId}&manifestHash=${manifestHash}&merkleRoot=${merkleRoot}&nonce=${nonce}&deadline=${deadline}`
-    }));
-
-    // 8. Pārbauda, vai paraksts ir sniegts
-    const signature = process.env.BACKUP_SIGNATURE;
-    if (!signature) {
-        console.log(JSON.stringify({ status: 'waiting_signature', message: 'Gaida lietotāja parakstu...' }));
-        return;
-    }
-
-    // 9. Augšupielādē mainītos failus (tikai pēc paraksta saņemšanas)
+    
+    // ============================================
+    // 7. AUGŠUPIELĀDĒ MAINĪTOS FAILUS
+    // ============================================
     const uploader = new TurboUploader({
-        uploadUrl: opts.turboUpload,
-        paymentUrl: opts.turboPayment
+        uploadUrl: CONFIG.TURBO_UPLOAD_URL,
+        paymentUrl: CONFIG.TURBO_PAYMENT_URL
     });
     const results = await uploader.uploadChangedFiles(repoPath, changed, repoName);
-
-    // 10. Atjaunina manifestu ar reālajiem TX ID
-    const finalManifest = createManifest(unchanged, results, repoName);
-    const manifestTxId = await uploader.uploadManifest(finalManifest, repoName);
-
-    // 11. Saglabā manifestu lokāli testēšanai
+    
+    // ============================================
+    // 8. IZVEIDO UN AUGŠUPIELĀDĒ MANIFEST
+    // ============================================
+    const manifest = createManifest(unchanged, results, repoName);
+    const manifestTxId = await uploader.uploadManifest(manifest, repoName);
+    
+    // ============================================
+    // 9. SAGLABĀ MANIFESTU LOKĀLI
+    // ============================================
     const backupDir = path.join(repoPath, '.permrepo', 'backups');
     if (!fs.existsSync(backupDir)) {
         fs.mkdirSync(backupDir, { recursive: true });
     }
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const localManifestPath = path.join(backupDir, `manifest-${timestamp}.json`);
-    fs.writeFileSync(localManifestPath, JSON.stringify(finalManifest, null, 2));
-    console.log(`📁 Manifests saglabāts lokāli: ${localManifestPath}`);
-
-    // 12. Izsauc addBackup ar lietotāja parakstu
-    const totalSize = Object.values(results).reduce((s, f) => s + f.size, 0);
-
-    try {
-        const signer = new ethers.Wallet(process.env.PRIVATE_KEY || ethers.ZeroHash, provider);
-        await updateNFT({
-            signer,
-            nftAddress: opts.nft,
-            tokenId,
-            manifestHash: ethers.id(JSON.stringify(finalManifest)),
-            merkleRoot,
-            manifestURI: `ar://${manifestTxId}`,
-            deadline,
-            signature
-        });
-    } catch (error) {
-        console.warn({ warning: 'nft_update_failed', error: error.message });
-    }
-
-    // 13. Saglabā lock failu
+    fs.writeFileSync(localManifestPath, JSON.stringify(manifest, null, 2));
+    
+    // ============================================
+    // 10. SAGLABĀ LOCK FAILU
+    // ============================================
     saveLock(repoPath, unchanged, results);
-
+    
+    // ============================================
+    // 11. REZULTĀTI
+    // ============================================
+    const totalSize = Object.values(results).reduce((s, f) => s + f.size, 0);
+    
     console.log(JSON.stringify({
         status: 'success',
-        manifestTxId,
-        localManifestPath,
-        merkleRoot,
+        manifestTxId: manifestTxId,
+        localManifestPath: localManifestPath,
+        merkleRoot: merkleRoot,
         filesChanged: Object.keys(results).length,
-        totalSize
+        totalSize: totalSize
     }));
 }
 
