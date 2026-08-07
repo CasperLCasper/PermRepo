@@ -13,7 +13,9 @@ const CONFIG = {
     REGISTRY_ADDRESS: '0x2a5a7F926046BB1A011D9082aB70BF38bfcb9dc9',
     TURBO_UPLOAD_URL: 'https://upload.services.ar-io.dev',
     TURBO_PAYMENT_URL: 'https://payment.services.ar-io.dev',
-    WEB_URL: 'https://permrepo.pages.dev'
+    SIGN_URL: 'https://permrepo.pages.dev/sign.html',
+    PAY_URL: 'https://permrepo.pages.dev/pay.html',
+    SUBSCRIBE_URL: 'https://permrepo.pages.dev/subscribe.html'
 };
 
 async function backup(opts) {
@@ -38,7 +40,7 @@ async function backup(opts) {
 
     if (tokenId === 0n) {
         console.log('❌ Nav izveidots NFT šim repozitorijam.');
-        console.log(`🔗 Izveidot NFT: ${CONFIG.WEB_URL}/pay.html?repo=${encodeURIComponent(repoName)}`);
+        console.log(`🔗 Izveidot NFT: ${CONFIG.PAY_URL}?repo=${encodeURIComponent(repoName)}`);
         console.log('⚠️ Pēc NFT izveides, palaid Action vēlreiz.');
         return;
     }
@@ -61,7 +63,7 @@ async function backup(opts) {
     const isSubscribed = await subContract.isSubscribed(tokenId);
     if (!isSubscribed) {
         console.log(`❌ NFT (tokenId: ${tokenId}) nav aktīva abonementa.`);
-        console.log(`🔗 Aktivizēt abonementu: ${CONFIG.WEB_URL}/subscribe.html`);
+        console.log(`🔗 Aktivizēt abonementu: ${CONFIG.SUBSCRIBE_URL}`);
         console.log('⚠️ Pēc abonementa iegādes, palaid Action vēlreiz.');
         return;
     }
@@ -71,7 +73,7 @@ async function backup(opts) {
     const issueBody = process.env.ISSUE_BODY;
     if (!issueBody) {
         console.log('✍️ Nepieciešams paraksts, lai veiktu backupu.');
-        console.log(`🔗 Parakstīt: ${CONFIG.WEB_URL}/sign.html?repo=${encodeURIComponent(repoName)}`);
+        console.log(`🔗 Parakstīt: ${CONFIG.SIGN_URL}?repo=${encodeURIComponent(repoName)}`);
         console.log('⚠️ Pēc parakstīšanas, palaid Action vēlreiz.');
         return;
     }
