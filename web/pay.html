@@ -13,7 +13,7 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<div class="container">
+<div class="container text-center">
     <h1>🔒 PermRepo NFT</h1>
     <p class="subtitle">Izveidot NFT savam repozitorijam</p>
     
@@ -21,9 +21,12 @@
         <span class="info-label">Repo</span>
         <input type="text" id="repoInput" placeholder="piem., lietotajs/repo" value="" style="width:100%;padding:8px;margin-top:4px;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#e6edf3;">
     </div>
-    <div class="info-row"><span class="info-label">Maksa</span><span class="info-value">Bezmaksas</span></div>
+    <div class="info-row text-left">
+        <span class="info-label">Maksa</span>
+        <span class="info-value">Bezmaksas</span>
+    </div>
     
-    <button id="btn" disabled>⏳ Gaida savienojumu...</button>
+    <button id="btn" class="sign-button" disabled>⏳ Gaida savienojumu...</button>
     <div class="status" id="status"></div>
     <div class="error" id="error"></div>
 </div>
@@ -54,7 +57,7 @@ async function init() {
         document.getElementById('btn').disabled = false;
         document.getElementById('btn').textContent = '🔒 Izveidot NFT';
         document.getElementById('btn').onclick = mintNFT;
-        document.getElementById('status').textContent = '✅ Savienots (Base Sepolia)';
+        document.getElementById('status').textContent = '✅ Gatavs kalšanai';
     } catch(e) {
         document.getElementById('error').textContent = '❌ Kļūda: ' + e.message;
     }
