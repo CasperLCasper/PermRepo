@@ -1,19 +1,11 @@
 const core = require('@actions/core');
 const github = require('@actions/github');
 const { ethers } = require('ethers');
+const CONFIG = require('../../shared/config');
 
 // ============================================
-// PERMAREPO KONFIGURĀCIJA (iekodēta)
+// PERMAREPO GITHUB ACTION — GALVENĀ LOĢIKA
 // ============================================
-const CONFIG = {
-    RPC_URL: 'https://sepolia.base.org',
-    SUBSCRIPTION_ADDRESS: '0x29f1ed42C6C2E157B7571f9585a9C9Dd6fBcda51',
-    NFT_ADDRESS: '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4',
-    REGISTRY_ADDRESS: '0x2a5a7F926046BB1A011D9082aB70BF38bfcb9dc9',
-    TURBO_UPLOAD_URL: 'https://upload.services.ar-io.dev',
-    TURBO_PAYMENT_URL: 'https://payment.services.ar-io.dev',
-    WEB_URL: 'https://perma-repo.pages.dev'
-};
 
 async function run() {
     const octokit = github.getOctokit(process.env.GITHUB_TOKEN);
@@ -22,89 +14,161 @@ async function run() {
     const { owner, repo } = github.context.repo;
     
     try {
-        // 1. Parse JSON from issue body
+        // 1. Parsēt JSON no Issue body
         const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
         if (!jsonMatch) {
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Neizdevās atrast JSON datus Issue aprakstā.');
+            await closeIssue(octokit, owner, repo, issueNumber, 
+                '❌ Neizdevās atrast JSON datus Issue aprakstā.\n\n' +
+                'Pārliecinies, ka JSON ir ievietots starp ```json ... ``` atzīmēm.'
+            );
             return;
         }
         
         const payload = JSON.parse(jsonMatch[1]);
         const { address, signature, message, timestamp } = payload;
         
-        // 2. Timestamp check (10 minutes)
+        // 2. Timestamp pārbaude
         const now = Math.floor(Date.now() / 1000);
-        if (now - timestamp > 600) {
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Paraksts ir novecojis (>10 min). Lūdzu, mēģiniet vēlreiz.');
+        if (now - timestamp > CONFIG.SIGNATURE_TIMEOUT_SECONDS) {
+            const signUrl = `${CONFIG.WEB_URL}${CONFIG.SIGN_PAGE}?repo=${encodeURIComponent(`${owner}/${repo}`)}`;
+            await closeIssue(octokit, owner, repo, issueNumber, 
+                '❌ Paraksts ir novecojis (>10 min). Lūdzu, mēģiniet vēlreiz.\n\n' +
+                `🔗 Parakstīt no jauna: ${signUrl}`
+            );
             return;
         }
         
-        // 3. Verify signature
-        const recoveredAddress = ethers.verifyMessage(message, signature);
+        // 3. Verificēt parakstu
+        let recoveredAddress;
+        try {
+            recoveredAddress = ethers.verifyMessage(message, signature);
+        } catch (error) {
+            await closeIssue(octokit, owner, repo, issueNumber, 
+                '❌ Neizdevās verificēt parakstu. Iespējams, bojāts paraksts.'
+            );
+            return;
+        }
+        
         if (recoveredAddress.toLowerCase() !== address.toLowerCase()) {
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Paraksta verifikācija neizdevās. Adrese nesakrīt.');
+            await closeIssue(octokit, owner, repo, issueNumber, 
+                '❌ Paraksta verifikācija neizdevās. Adrese nesakrīt.'
+            );
             return;
         }
         
-        // 4. Extract repo name
+        // 4. Izvilkt repo nosaukumu no ziņojuma
         const repoMatch = message.match(/Repository: (.+)/);
         const repoName = repoMatch ? repoMatch[1] : `${owner}/${repo}`;
         const repoHash = ethers.id(repoName);
         
-        const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
-        const nftABI = ['function repositoryTokens(bytes32) view returns (uint256)'];
-        const nftContract = new ethers.Contract(CONFIG.NFT_ADDRESS, nftABI, provider);
+        // 5. Pārbaudīt NFT eksistenci
+        const rpcUrl = core.getInput('rpc_url') || CONFIG.RPC_URL;
+        const nftAddress = core.getInput('nft_address') || CONFIG.NFT_ADDRESS;
+        const subscriptionAddress = core.getInput('subscription_address') || CONFIG.SUBSCRIPTION_ADDRESS;
+        
+        const provider = new ethers.JsonRpcProvider(rpcUrl);
+        
+        const nftABI = [
+            'function repositoryTokens(bytes32) view returns (uint256)',
+            'function ownerOf(uint256) view returns (address)'
+        ];
+        const nftContract = new ethers.Contract(nftAddress, nftABI, provider);
         const tokenId = await nftContract.repositoryTokens(repoHash);
         
-        // 5. Pārbauda, vai ir NFT
         if (tokenId === 0n) {
-            const nftUrl = `${CONFIG.WEB_URL}/pay.html?repo=${encodeURIComponent(repoName)}`;
+            const payUrl = `${CONFIG.WEB_URL}${CONFIG.PAY_PAGE}?repo=${encodeURIComponent(repoName)}`;
             await closeIssue(octokit, owner, repo, issueNumber, 
-                `❌ Šim repozitorijam nav izveidots NFT.\n\n` +
-                `🔗 Izveidot NFT: ${nftUrl}\n\n` +
-                `⚠️ Pēc NFT izveides, palaid Action vēlreiz.`
+                '❌ Šim repozitorijam nav izveidots NFT.\n\n' +
+                `🔗 Izveidot NFT: ${payUrl}\n\n` +
+                '⚠️ Pēc NFT izveides, izveido jaunu Issue, lai palaistu backup.'
             );
             return;
         }
         
-        // 6. Pārbauda, vai ir abonements
+        // 6. Pārbaudīt NFT īpašnieku
+        const nftOwner = await nftContract.ownerOf(tokenId);
+        if (nftOwner.toLowerCase() !== address.toLowerCase()) {
+            await closeIssue(octokit, owner, repo, issueNumber, 
+                '❌ NFT nepieder norādītajai adresei.\n\n' +
+                `NFT īpašnieks: \`${nftOwner}\`\n` +
+                `Norādītā adrese: \`${address}\``
+            );
+            return;
+        }
+        
+        // 7. Pārbaudīt abonementu
         const subscriptionABI = ['function isSubscribed(uint256) view returns (bool)'];
-        const subscriptionContract = new ethers.Contract(CONFIG.SUBSCRIPTION_ADDRESS, subscriptionABI, provider);
+        const subscriptionContract = new ethers.Contract(subscriptionAddress, subscriptionABI, provider);
         const isSubscribed = await subscriptionContract.isSubscribed(tokenId);
         
         if (!isSubscribed) {
-            const subscribeUrl = `${CONFIG.WEB_URL}/subscribe.html`;
+            const subscribeUrl = `${CONFIG.WEB_URL}${CONFIG.SUBSCRIBE_PAGE}`;
             await closeIssue(octokit, owner, repo, issueNumber,
-                `❌ Šim NFT (tokenId: ${tokenId}) nav aktīva abonementa.\n\n` +
+                '❌ Šim NFT nav aktīva abonementa.\n\n' +
+                `NFT Token ID: \`${tokenId}\`\n\n` +
                 `🔗 Aktivizēt abonementu: ${subscribeUrl}\n\n` +
-                `⚠️ Pēc abonementa iegādes, palaid Action vēlreiz.`
+                '⚠️ Pēc abonementa iegādes, izveido jaunu Issue, lai palaistu backup.'
             );
             return;
         }
         
-        // 7. Execute backup
+        // 8. Izpildīt backup
         const { execSync } = require('node:child_process');
+        
         const cmd = [
             'npx perm-repo backup',
             `--wallet ${address}`,
-            `--subscription ${CONFIG.SUBSCRIPTION_ADDRESS}`,
-            `--nft ${CONFIG.NFT_ADDRESS}`,
-            `--registry ${CONFIG.REGISTRY_ADDRESS}`,
-            `--rpc ${CONFIG.RPC_URL}`,
-            `--turbo-upload ${CONFIG.TURBO_UPLOAD_URL}`,
-            `--turbo-payment ${CONFIG.TURBO_PAYMENT_URL}`,
+            `--rpc ${rpcUrl}`,
+            `--subscription ${subscriptionAddress}`,
+            `--nft ${nftAddress}`,
+            `--registry ${core.getInput('registry_address') || CONFIG.REGISTRY_ADDRESS}`,
+            `--turbo-upload ${core.getInput('turbo_upload_url') || CONFIG.TURBO_UPLOAD_URL}`,
+            `--turbo-payment ${core.getInput('turbo_payment_url') || CONFIG.TURBO_PAYMENT_URL}`,
             '--repo .'
         ].join(' ');
         
-        const output = execSync(cmd, { encoding: 'utf-8' });
-        const result = JSON.parse(output.trim().split('\n').pop());
+        console.log('🔧 Izpilda:', cmd);
         
+        let output;
+        try {
+            output = execSync(cmd, { 
+                encoding: 'utf-8',
+                stdio: ['pipe', 'pipe', 'pipe']
+            });
+        } catch (execError) {
+            await closeIssue(octokit, owner, repo, issueNumber,
+                '❌ Backupa izpilde neizdevās.\n\n' +
+                '```\n' + (execError.stderr || execError.message) + '\n```'
+            );
+            return;
+        }
+        
+        console.log('Backup izvade:', output);
+        
+        // 9. Parsēt rezultātu
+        const lines = output.trim().split('\n');
+        const jsonLine = lines.find(l => l.startsWith('{'));
+        let result;
+        
+        if (jsonLine) {
+            try {
+                result = JSON.parse(jsonLine);
+            } catch {
+                result = { status: 'unknown' };
+            }
+        } else {
+            result = { status: 'success' };
+        }
+        
+        // 10. Aizvērt Issue ar rezultātu
         if (result.status === 'success') {
             await closeIssue(octokit, owner, repo, issueNumber,
-                `✅ Backups veiksmīgs!\n\n` +
-                `Manifests: \`${result.manifestTxId}\`\n` +
-                `Faili: ${result.filesChanged}\n` +
-                `Izmērs: ${result.totalSize} baiti`
+                '✅ **Backups veiksmīgs!**\n\n' +
+                `🔗 Manifests: \`${result.manifestTxId || 'N/A'}\`\n` +
+                `📊 Faili: ${result.filesChanged || '?'}\n` +
+                `📦 Izmērs: ${result.totalSize ? (result.totalSize / 1024).toFixed(1) + ' KB' : 'N/A'}\n` +
+                `🌳 Merkle root: \`${result.merkleRoot || 'N/A'}\`\n` +
+                `🎫 Token ID: \`${result.tokenId || tokenId}\``
             );
         } else {
             await closeIssue(octokit, owner, repo, issueNumber,
@@ -113,17 +177,36 @@ async function run() {
         }
         
     } catch (error) {
-        await closeIssue(octokit, owner, repo, issueNumber, `❌ Kļūda: ${error.message}`);
+        console.error('Kļūda:', error);
+        await closeIssue(octokit, owner, repo, issueNumber, 
+            '❌ **Negaidīta kļūda**\n\n' +
+            '```\n' + error.message + '\n```\n\n' +
+            'Lūdzu, sazinies ar atbalsta komandu.'
+        );
     }
 }
 
+/**
+ * Aizver Issue ar komentāru
+ */
 async function closeIssue(octokit, owner, repo, issueNumber, message) {
-    await octokit.rest.issues.createComment({
-        owner, repo, issue_number: issueNumber, body: message
-    });
-    await octokit.rest.issues.update({
-        owner, repo, issue_number: issueNumber, state: 'closed'
-    });
+    try {
+        await octokit.rest.issues.createComment({
+            owner,
+            repo,
+            issue_number: issueNumber,
+            body: message
+        });
+        
+        await octokit.rest.issues.update({
+            owner,
+            repo,
+            issue_number: issueNumber,
+            state: 'closed'
+        });
+    } catch (error) {
+        console.error('Neizdevās aizvērt Issue:', error.message);
+    }
 }
 
 run();
