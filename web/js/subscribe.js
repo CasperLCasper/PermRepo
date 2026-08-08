@@ -1,63 +1,102 @@
+// ============================================
+// PERMAREPO ABONĒŠANAS LAPA
+// ============================================
+
 const SUBSCRIPTION_ADDRESS = '0x29f1ed42C6C2E157B7571f9585a9C9Dd6fBcda51';
 const USDC_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e';
 const CHAIN_ID = '0x14a34';
+const CHAIN_NAME = 'Base Sepolia';
+const SUBSCRIPTION_PRICE_USDC = 2;
+const SUBSCRIPTION_PERIOD_DAYS = 30;
 
 const ABI = ["function subscribe(uint256 tokenId) external"];
-const ERC20_ABI = ["function approve(address,uint256) external returns(bool)","function allowance(address,address) external view returns(uint256)"];
+const ERC20_ABI = [
+    "function approve(address,uint256) external returns(bool)",
+    "function allowance(address,address) external view returns(uint256)",
+    "function decimals() external view returns(uint8)"
+];
 
 let contract, usdc, signer, userAddress;
 
 async function init() {
     if (!window.ethereum) { 
-        document.getElementById('error').textContent = '❌ Instalē MetaMask'; 
+        showError('❌ Instalē MetaMask vai citu kripto maku'); 
         return; 
     }
+    
     try {
-        await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] });
-        const p = new ethers.BrowserProvider(ethereum);
-        signer = await p.getSigner();
+        await ethereum.request({ 
+            method: 'wallet_switchEthereumChain', 
+            params: [{ chainId: CHAIN_ID }] 
+        });
+        
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        signer = await provider.getSigner();
         userAddress = await signer.getAddress();
+        
         contract = new ethers.Contract(SUBSCRIPTION_ADDRESS, ABI, signer);
         usdc = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, signer);
-        document.getElementById('btn').disabled = false;
-        document.getElementById('btn').textContent = '💎 Aktivizēt abonementu';
-        document.getElementById('btn').onclick = subscribe;
-        document.getElementById('status').textContent = '✅ Savienots (Base Sepolia)';
-    } catch(e) { 
-        document.getElementById('error').textContent = '❌ Kļūda: ' + e.message; 
+        
+        const button = document.getElementById('btn');
+        button.disabled = false;
+        button.textContent = '💎 Aktivizēt abonementu';
+        button.onclick = subscribe;
+        
+        setStatus(`✅ Savienots (${CHAIN_NAME})`);
+    } catch (e) { 
+        showError('❌ Kļūda: ' + e.message); 
     }
 }
 
 async function subscribe() {
     const tokenId = document.getElementById('tokenId').value;
+    
     if (!tokenId || tokenId < 1) {
-        document.getElementById('error').textContent = '❌ Lūdzu, ievadi NFT Token ID';
+        showError('❌ Lūdzu, ievadi NFT Token ID');
         return;
     }
     
     try {
-        document.getElementById('btn').disabled = true;
-        document.getElementById('btn').textContent = '⏳ Gaida apstiprinājumu...';
+        const button = document.getElementById('btn');
+        button.disabled = true;
+        button.textContent = '⏳ Gaida apstiprinājumu...';
 
-        const price = ethers.parseUnits('2', 6);
+        // Aprēķināt cenu ar pareizu decimals skaitu
+        const price = ethers.parseUnits(SUBSCRIPTION_PRICE_USDC.toString(), 6);
+
+        // Pārbaudīt USDC atļauju
         const allowance = await usdc.allowance(userAddress, SUBSCRIPTION_ADDRESS);
+        
         if (allowance < price) {
-            document.getElementById('status').textContent = '1/2: Apstiprini USDC atļauju...';
+            setStatus('1/2: Apstiprini USDC atļauju...');
             const approveTx = await usdc.approve(SUBSCRIPTION_ADDRESS, price);
             await approveTx.wait();
         }
 
-        document.getElementById('status').textContent = '2/2: Apstiprini abonementu...';
+        setStatus('2/2: Apstiprini abonementu...');
         const tx = await contract.subscribe(tokenId);
         await tx.wait();
 
-        document.getElementById('status').textContent = '✅ Abonements aktivizēts!';
-        document.getElementById('btn').textContent = '✅ Gatavs';
-    } catch(e) {
-        document.getElementById('error').textContent = '❌ ' + e.message;
-        document.getElementById('btn').disabled = false;
-        document.getElementById('btn').textContent = '💎 Aktivizēt abonementu';
+        setStatus(`✅ Abonements aktivizēts! Derīgs ${SUBSCRIPTION_PERIOD_DAYS} dienas.`);
+        button.textContent = '✅ Gatavs';
+    } catch (e) {
+        if (e.code === 'ACTION_REJECTED') {
+            showError('❌ Transakcija atcelta');
+        } else {
+            showError('❌ ' + e.message);
+        }
+        const button = document.getElementById('btn');
+        button.disabled = false;
+        button.textContent = '💎 Aktivizēt abonementu';
     }
+}
+
+function setStatus(message) {
+    document.getElementById('status').textContent = message;
+}
+
+function showError(message) {
+    document.getElementById('error').textContent = message;
 }
 
 init();
