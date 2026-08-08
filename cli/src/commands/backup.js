@@ -17,7 +17,7 @@ async function backup(opts) {
     }
 
     const repoPath = path.resolve(opts.repo || '.');
-    const repoName = getRepoName(repoPath).trim();
+    let repoName = getRepoName(repoPath).trim().toLowerCase();
     const repoHash = ethers.id(repoName);
     const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
 
