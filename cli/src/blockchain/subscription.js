@@ -1,13 +1,42 @@
 const { ethers } = require('ethers');
+const CONFIG = require('../../../shared/config');
 
 const SUBSCRIPTION_ABI = [
-    "function isSubscribed(address user) external view returns (bool)"
+    "function isSubscribed(uint256 tokenId) external view returns (bool)",
+    "function subscriptionExpiry(uint256 tokenId) external view returns (uint256)",
+    "function getSubscriptionExpiry(uint256 tokenId) external view returns (uint256)"
 ];
 
-async function checkSubscription(provider, subscriptionAddress, userAddress) {
-    if (!subscriptionAddress) throw new Error('Nav norādīta Subscription līguma adrese');
-    const contract = new ethers.Contract(subscriptionAddress, SUBSCRIPTION_ABI, provider);
-    return await contract.isSubscribed(userAddress);
+/**
+ * Pārbauda, vai NFT (repo) ir aktīvs abonements
+ * @param {ethers.Provider} provider
+ * @param {string} subscriptionAddress
+ * @param {bigint|number} tokenId
+ * @returns {Promise<boolean>}
+ */
+async function checkSubscription(provider, subscriptionAddress, tokenId) {
+    const address = subscriptionAddress || CONFIG.SUBSCRIPTION_ADDRESS;
+    if (!address) throw new Error('Nav norādīta Subscription līguma adrese');
+    
+    const contract = new ethers.Contract(address, SUBSCRIPTION_ABI, provider);
+    const isSubscribed = await contract.isSubscribed(tokenId);
+    return isSubscribed;
 }
 
-module.exports = { checkSubscription };
+/**
+ * Iegūst abonementa derīguma termiņu
+ * @param {ethers.Provider} provider
+ * @param {string} subscriptionAddress
+ * @param {bigint|number} tokenId
+ * @returns {Promise<bigint>}
+ */
+async function getSubscriptionExpiry(provider, subscriptionAddress, tokenId) {
+    const address = subscriptionAddress || CONFIG.SUBSCRIPTION_ADDRESS;
+    if (!address) throw new Error('Nav norādīta Subscription līguma adrese');
+    
+    const contract = new ethers.Contract(address, SUBSCRIPTION_ABI, provider);
+    const expiry = await contract.getSubscriptionExpiry(tokenId);
+    return expiry;
+}
+
+module.exports = { checkSubscription, getSubscriptionExpiry };
