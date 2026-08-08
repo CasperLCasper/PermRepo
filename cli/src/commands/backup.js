@@ -34,7 +34,7 @@ async function backup(opts) {
     // NFT pārbaude
     const tokenId = await getExistingNFT(provider, CONFIG.NFT_ADDRESS, repoHash);
     if (tokenId === 0n || tokenId === 0) {
-        console.log(`❌ Nav NFT. Izveido: ${CONFIG.WEB_URL}${CONFIG.PAY_PAGE}?repo=${encodeURIComponent(repoName)}`);
+        console.log(`❌ Nav NFT. Izveido: ${CONFIG.WEB_URL}${CONFIG.NFT_PAGE}?repo=${encodeURIComponent(repoName)}`);
         return;
     }
 
