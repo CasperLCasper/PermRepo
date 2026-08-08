@@ -61,19 +61,36 @@ function saveLock(repoPath, unchanged, uploaded) {
 }
 
 function getRepoName(repoPath) {
-    if (process.env.GITHUB_REPOSITORY) return process.env.GITHUB_REPOSITORY;
-    if (process.env.CI_PROJECT_PATH) return process.env.CI_PROJECT_PATH;
-    if (process.env.BITBUCKET_REPO_FULL_NAME) return process.env.BITBUCKET_REPO_FULL_NAME;
-    const gitConfigPath = path.join(repoPath, '.git', 'config');
-    if (fs.existsSync(gitConfigPath)) {
-        try {
-            const content = fs.readFileSync(gitConfigPath, 'utf-8');
-            const urlMatch = content.match(/url\s*=\s*(.+)/);
-            if (urlMatch) { const m = urlMatch[1].trim().match(/[:\/]([^\/]+\/[^\/]+?)(\.git)?$/); if (m) return m[1]; }
-        } catch {}
+    let repoName;
+    
+    if (process.env.GITHUB_REPOSITORY) {
+        repoName = process.env.GITHUB_REPOSITORY;
+    } else if (process.env.CI_PROJECT_PATH) {
+        repoName = process.env.CI_PROJECT_PATH;
+    } else if (process.env.BITBUCKET_REPO_FULL_NAME) {
+        repoName = process.env.BITBUCKET_REPO_FULL_NAME;
+    } else {
+        const gitConfigPath = path.join(repoPath, '.git', 'config');
+        if (fs.existsSync(gitConfigPath)) {
+            try {
+                const content = fs.readFileSync(gitConfigPath, 'utf-8');
+                const urlMatch = content.match(/url\s*=\s*(.+)/);
+                if (urlMatch) {
+                    const m = urlMatch[1].trim().match(/[:\/]([^\/]+\/[^\/]+?)(\.git)?$/);
+                    if (m) repoName = m[1];
+                }
+            } catch {}
+        }
+        if (!repoName) {
+            try {
+                if (fs.existsSync(repoPath) && fs.statSync(repoPath).isDirectory()) {
+                    repoName = path.basename(path.resolve(repoPath));
+                }
+            } catch {}
+        }
     }
-    try { if (fs.existsSync(repoPath) && fs.statSync(repoPath).isDirectory()) return path.basename(path.resolve(repoPath)); } catch {}
-    return 'unknown-repo';
+    
+    return (repoName || 'unknown-repo').trim().toLowerCase();
 }
 
 module.exports = { scanFiles, compareWithLock, saveLock, getRepoName };
