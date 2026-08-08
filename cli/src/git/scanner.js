@@ -90,7 +90,7 @@ function getRepoName(repoPath) {
         }
     }
     
-    return (repoName || 'unknown-repo').trim().toLowerCase();
+    return (repoName || 'unknown-repo').trim();
 }
 
 module.exports = { scanFiles, compareWithLock, saveLock, getRepoName };
