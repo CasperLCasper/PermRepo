@@ -1,13 +1,9 @@
-// ============================================
-// PERMAREPO NFT KALŠANAS LAPA
-// ============================================
-
 const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
 const CHAIN_ID = '0x14a34';
 const CHAIN_NAME = 'Base Sepolia';
 
 const params = new URLSearchParams(window.location.search);
-const repo = params.get('repo') || '';
+let repo = (params.get('repo') || '').trim();
 
 const ABI = ["function mintRepository(address,string) external returns(uint256)"];
 
@@ -20,23 +16,16 @@ async function init() {
     }
     
     try {
-        // Pārslēgties uz pareizo ķēdi
-        await ethereum.request({ 
-            method: 'wallet_switchEthereumChain', 
-            params: [{ chainId: CHAIN_ID }] 
-        });
-        
+        await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] });
         const provider = new ethers.BrowserProvider(window.ethereum);
         signer = await provider.getSigner();
         userAddress = await signer.getAddress();
         
-        // Aizpildīt repo nosaukumu
         if (repo) {
             document.getElementById('repoInput').value = repo;
             document.getElementById('repoDisplay').textContent = repo;
         }
         
-        // Aktivizēt pogu
         const button = document.getElementById('mintButton');
         button.disabled = false;
         button.textContent = '🔒 Izveidot NFT';
@@ -49,10 +38,10 @@ async function init() {
 }
 
 async function mintNFT() {
-    const repo = document.getElementById('repoInput').value.trim();
+    repo = document.getElementById('repoInput').value.trim();
     
     if (!repo) {
-        showError('❌ Nav norādīts repozitorija nosaukums. Izmanto ?repo=lietotajs/repo');
+        showError('❌ Nav norādīts repozitorija nosaukums.');
         return;
     }
     
@@ -67,11 +56,10 @@ async function mintNFT() {
         const tx = await contract.mintRepository(userAddress, repo);
         
         setStatus('⏳ Gaida transakcijas apstiprinājumu...');
-        const receipt = await tx.wait();
+        await tx.wait();
         
         setStatus(`✅ NFT izveidots priekš: ${repo}`);
         button.textContent = '✅ Gatavs';
-        
     } catch (e) {
         if (e.code === 'ACTION_REJECTED') {
             showError('❌ Transakcija atcelta');
@@ -84,16 +72,8 @@ async function mintNFT() {
     }
 }
 
-function setStatus(message) {
-    document.getElementById('status').textContent = message;
-}
-
-function showError(message) {
-    document.getElementById('error').textContent = message;
-}
-
-function clearError() {
-    document.getElementById('error').textContent = '';
-}
+function setStatus(message) { document.getElementById('status').textContent = message; }
+function showError(message) { document.getElementById('error').textContent = message; }
+function clearError() { document.getElementById('error').textContent = ''; }
 
 init();
