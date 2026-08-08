@@ -27,7 +27,7 @@ const CONFIG = {
     // ==========================================
     // WEB URL
     // ==========================================
-    WEB_URL: 'https://perma-repo.pages.dev',
+    WEB_URL: 'https://permrepo.pages.dev',
     SIGN_PAGE: '/sign.html',
     PAY_PAGE: '/pay.html',
     SUBSCRIBE_PAGE: '/subscribe.html',
