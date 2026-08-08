@@ -1,147 +1,274 @@
 const { ethers } = require('ethers');
 const fs = require('node:fs');
 const path = require('node:path');
+const CONFIG = require('../../../shared/config');
 const { scanFiles, compareWithLock, saveLock, getRepoName } = require('../git/scanner');
 const { TurboUploader } = require('../arweave/turbo');
 const { createManifest } = require('../manifest/create');
 const { createMerkleTree } = require('../merkle/tree');
+const { getExistingNFT, addBackup } = require('../blockchain/nft');
+const { checkSubscription } = require('../blockchain/subscription');
 
-const CONFIG = {
-    RPC_URL: 'https://sepolia.base.org',
-    SUBSCRIPTION_ADDRESS: '0x29f1ed42C6C2E157B7571f9585a9C9Dd6fBcda51',
-    NFT_ADDRESS: '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4',
-    REGISTRY_ADDRESS: '0x2a5a7F926046BB1A011D9082aB70BF38bfcb9dc9',
-    TURBO_UPLOAD_URL: 'https://upload.services.ar-io.dev',
-    TURBO_PAYMENT_URL: 'https://payment.services.ar-io.dev',
-    SIGN_URL: 'https://permrepo.pages.dev/sign.html',
-    PAY_URL: 'https://permrepo.pages.dev/pay.html',
-    SUBSCRIBE_URL: 'https://permrepo.pages.dev/subscribe.html'
-};
-
+/**
+ * Galvenā backup funkcija
+ * @param {Object} opts - Opcijas no CLI
+ */
 async function backup(opts) {
-    const wallet = process.env.WALLET_ADDRESS;
-    if (!wallet) {
-        console.log('❌ Nav iestatīts WALLET_ADDRESS GitHub Secrets.');
-        return;
-    }
-
-    const repoPath = path.resolve(opts.repo || '.');
-    let repoName = getRepoName(repoPath);
-    repoName = repoName.trim().replace(/\s+/g, ' ');
-    const repoHash = ethers.id(repoName);
-    const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
-
-    console.log('🚀 PermRepo — Pārbaude pirms backupa');
+    console.log('🚀 PermRepo — Inkrementāls backups uz Arweave');
     console.log('=======================================================');
-    console.log('🔍 DEBUG:');
-    console.log('  repoName:', JSON.stringify(repoName));
-    console.log('  repoName length:', repoName.length);
-    console.log('  repoHash:', repoHash);
-    console.log('  wallet:', wallet);
 
-    const nftABI = ['function repositoryTokens(bytes32) view returns (uint256)'];
-    const nftContract = new ethers.Contract(CONFIG.NFT_ADDRESS, nftABI, provider);
-    const tokenId = await nftContract.repositoryTokens(repoHash);
+    // ==========================================
+    // 0. IEGŪT MAKA ADRESI
+    // ==========================================
+    const walletAddress = opts.wallet || process.env.WALLET_ADDRESS;
+    if (!walletAddress) {
+        console.log('❌ Nav iestatīts WALLET_ADDRESS. Palaid caur GitHub Action vai iestati vidi.');
+        return;
+    }
+    console.log(`👛 Maks: ${walletAddress}`);
 
-    if (tokenId === 0n) {
+    // ==========================================
+    // 1. IEGŪT REPO NOSAUKUMU UN HASH
+    // ==========================================
+    const repoPath = path.resolve(opts.repo || '.');
+    let repoName = getRepoName(repoPath).trim();
+    const repoHash = ethers.id(repoName);
+    
+    console.log(`📦 Repozitorijs: ${repoName}`);
+    console.log(`🔑 Repo hash: ${repoHash}`);
+
+    // ==========================================
+    // 2. SAVIENOTIES AR BLOCKCHAIN
+    // ==========================================
+    const rpcUrl = opts.rpc || CONFIG.RPC_URL;
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    
+    const nftAddress = opts.nft || CONFIG.NFT_ADDRESS;
+    const subscriptionAddress = opts.subscription || CONFIG.SUBSCRIPTION_ADDRESS;
+
+    // ==========================================
+    // 3. PĀRBAUDĪT NFT EKSISTENCI
+    // ==========================================
+    console.log('🔍 Pārbauda NFT...');
+    const tokenId = await getExistingNFT(provider, nftAddress, repoHash);
+    
+    if (tokenId === 0n || tokenId === 0) {
+        const payUrl = `${CONFIG.WEB_URL}${CONFIG.PAY_PAGE}?repo=${encodeURIComponent(repoName)}`;
         console.log('❌ Nav izveidots NFT šim repozitorijam.');
-        console.log(`🔗 Izveidot NFT: ${CONFIG.PAY_URL}?repo=${encodeURIComponent(repoName)}`);
-        console.log('⚠️ Pēc NFT izveides, palaid Action vēlreiz.');
+        console.log(`🔗 Izveidot NFT: ${payUrl}`);
+        console.log('⚠️ Pēc NFT izveides, palaid backup vēlreiz.');
         return;
     }
+    console.log(`✅ NFT atrasts: tokenId=${tokenId}`);
 
+    // ==========================================
+    // 4. PĀRBAUDĪT NFT ĪPAŠNIEKU
+    // ==========================================
     const ownerABI = ['function ownerOf(uint256) view returns (address)'];
-    const nftOwnerContract = new ethers.Contract(CONFIG.NFT_ADDRESS, ownerABI, provider);
-    const nftOwner = await nftOwnerContract.ownerOf(tokenId);
-    if (nftOwner.toLowerCase() !== wallet.toLowerCase()) {
+    const nftContract = new ethers.Contract(nftAddress, ownerABI, provider);
+    const nftOwner = await nftContract.ownerOf(tokenId);
+    
+    if (nftOwner.toLowerCase() !== walletAddress.toLowerCase()) {
         console.log('❌ NFT nepieder šim makam.');
-        console.log(`NFT īpašnieks: ${nftOwner}`);
-        console.log(`Tavs maks: ${wallet}`);
+        console.log(`   NFT īpašnieks: ${nftOwner}`);
+        console.log(`   Tavs maks:     ${walletAddress}`);
         return;
     }
-    console.log('✅ NFT atrasts un pieder šim makam.');
+    console.log('✅ NFT īpašumtiesības apstiprinātas');
 
-    const subABI = ['function isSubscribed(uint256) view returns (bool)'];
-    const subContract = new ethers.Contract(CONFIG.SUBSCRIPTION_ADDRESS, subABI, provider);
-    const isSubscribed = await subContract.isSubscribed(tokenId);
-    if (!isSubscribed) {
+    // ==========================================
+    // 5. PĀRBAUDĪT ABONEMENTU
+    // ==========================================
+    console.log('🔍 Pārbauda abonementu...');
+    const subscribed = await checkSubscription(provider, subscriptionAddress, tokenId);
+    
+    if (!subscribed) {
+        const subscribeUrl = `${CONFIG.WEB_URL}${CONFIG.SUBSCRIBE_PAGE}`;
         console.log(`❌ NFT (tokenId: ${tokenId}) nav aktīva abonementa.`);
-        console.log(`🔗 Aktivizēt abonementu: ${CONFIG.SUBSCRIBE_URL}`);
-        console.log('⚠️ Pēc abonementa iegādes, palaid Action vēlreiz.');
+        console.log(`🔗 Aktivizēt abonementu: ${subscribeUrl}`);
+        console.log('⚠️ Pēc abonementa iegādes, palaid backup vēlreiz.');
         return;
     }
-    console.log('✅ Abonements aktīvs.');
+    console.log('✅ Abonements aktīvs');
 
+    // ==========================================
+    // 6. VERIFICĒT PARAKSTU (ja ir ISSUE_BODY)
+    // ==========================================
+    let parsedSignature = null;
+    let parsedAddress = null;
+    
     const issueBody = process.env.ISSUE_BODY;
-    if (!issueBody) {
-        console.log('✍️ Nepieciešams paraksts, lai veiktu backupu.');
-        console.log(`🔗 Parakstīt: ${CONFIG.SIGN_URL}?repo=${encodeURIComponent(repoName)}`);
-        console.log('⚠️ Pēc parakstīšanas, palaid Action vēlreiz.');
-        return;
+    if (issueBody) {
+        try {
+            const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
+            if (!jsonMatch) {
+                console.log('❌ Neizdevās atrast JSON datus Issue aprakstā.');
+                return;
+            }
+            
+            const payload = JSON.parse(jsonMatch[1]);
+            const { signature, message, timestamp } = payload;
+            
+            // Timestamp pārbaude
+            const now = Math.floor(Date.now() / 1000);
+            if (now - timestamp > CONFIG.SIGNATURE_TIMEOUT_SECONDS) {
+                console.log('❌ Paraksts ir novecojis (>10 min). Lūdzu, mēģiniet vēlreiz.');
+                return;
+            }
+            
+            // Paraksta verifikācija
+            parsedAddress = ethers.verifyMessage(message, signature);
+            if (parsedAddress.toLowerCase() !== walletAddress.toLowerCase()) {
+                console.log('❌ Paraksts neatbilst maka adresei.');
+                return;
+            }
+            
+            parsedSignature = signature;
+            console.log('✅ Paraksts veiksmīgi verificēts');
+        } catch (error) {
+            console.log('❌ Kļūda verificējot parakstu:', error.message);
+            return;
+        }
+    } else {
+        console.log('⚠️ Nav ISSUE_BODY — izlaiž paraksta verifikāciju (lokālais režīms)');
     }
 
-    let address;
-    try {
-        const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
-        if (!jsonMatch) {
-            console.log('❌ Neizdevās atrast JSON datus Issue aprakstā.');
-            return;
-        }
-        const payload = JSON.parse(jsonMatch[1]);
-        const { signature, message, timestamp } = payload;
-        if (Math.floor(Date.now() / 1000) - timestamp > 600) {
-            console.log('❌ Paraksts ir novecojis (>10 min). Lūdzu, mēģiniet vēlreiz.');
-            return;
-        }
-        address = ethers.verifyMessage(message, signature);
-        if (address.toLowerCase() !== wallet.toLowerCase()) {
-            console.log('❌ Paraksts neatbilst maka adresei.');
-            return;
-        }
-        console.log('✅ Paraksts veiksmīgi verificēts.');
-    } catch (error) {
-        console.log('❌ Kļūda verificējot parakstu:', error.message);
-        return;
-    }
-
+    // ==========================================
+    // 7. SKENĒT FAILUS UN SALĪDZINĀT
+    // ==========================================
+    console.log('📊 Skenē failus...');
     const currentFiles = scanFiles(repoPath);
+    console.log(`   Atrasti ${Object.keys(currentFiles).length} faili`);
+    
     const lockData = loadLock(repoPath);
-    const { unchanged, changed } = compareWithLock(currentFiles, lockData);
-    if (!Object.keys(changed).length) {
+    const { unchanged, changed, deleted } = compareWithLock(currentFiles, lockData);
+    
+    console.log(`   Nemainīti: ${Object.keys(unchanged).length}`);
+    console.log(`   Mainīti:   ${Object.keys(changed).length}`);
+    console.log(`   Dzēsti:    ${deleted.length}`);
+    
+    if (Object.keys(changed).length === 0 && deleted.length === 0) {
         console.log('✅ Nav izmaiņu kopš pēdējā backupa.');
         return;
     }
-    console.log(`📊 Mainīti faili: ${Object.keys(changed).length}`);
 
+    // ==========================================
+    // 8. APRĒĶINĀT MERKLE ROOT
+    // ==========================================
     const allFiles = { ...unchanged, ...changed };
     const { root: merkleRoot } = createMerkleTree(allFiles);
+    console.log(`🌳 Merkle root: ${merkleRoot}`);
 
-    const uploader = new TurboUploader({ uploadUrl: CONFIG.TURBO_UPLOAD_URL, paymentUrl: CONFIG.TURBO_PAYMENT_URL });
+    // ==========================================
+    // 9. AUGŠUPIELĀDĒT MAINĪTOS FAILUS
+    // ==========================================
+    console.log('📤 Augšupielādē mainītos failus uz Arweave...');
+    const uploader = new TurboUploader({
+        uploadUrl: opts.turboUpload || CONFIG.TURBO_UPLOAD_URL,
+        paymentUrl: opts.turboPayment || CONFIG.TURBO_PAYMENT_URL
+    });
+    
     const results = await uploader.uploadChangedFiles(repoPath, changed, repoName);
+    console.log(`✅ Augšupielādēti ${Object.keys(results).length} faili`);
+
+    // ==========================================
+    // 10. IZVEIDOT UN AUGŠUPIELĀDĒT MANIFESTU
+    // ==========================================
     const manifest = createManifest(unchanged, results, repoName);
     const manifestTxId = await uploader.uploadManifest(manifest, repoName);
+    const manifestURI = `ar://${manifestTxId}`;
+    console.log(`📋 Manifests: ${manifestURI}`);
 
-    const backupDir = path.join(repoPath, '.permrepo', 'backups');
-    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    const localPath = path.join(backupDir, `manifest-${ts}.json`);
+    // ==========================================
+    // 11. SAGLABĀT LOKĀLO BACKUP KOPIJU
+    // ==========================================
+    const permRepoDir = path.join(repoPath, CONFIG.PERMAREPO_DIR);
+    const backupDir = path.join(permRepoDir, CONFIG.BACKUPS_DIR);
+    
+    if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
+    }
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const localPath = path.join(backupDir, `manifest-${timestamp}.json`);
     fs.writeFileSync(localPath, JSON.stringify(manifest, null, 2));
+    console.log(`💾 Lokālā kopija: ${localPath}`);
 
+    // ==========================================
+    // 12. SAGLABĀT LOCK FAILU
+    // ==========================================
     saveLock(repoPath, unchanged, results);
-    const totalSize = Object.values(results).reduce((s, f) => s + f.size, 0);
+    if (deleted.length > 0) {
+        console.log(`🗑️ Dzēstie faili izņemti no lock faila: ${deleted.join(', ')}`);
+    }
 
+    // ==========================================
+    // 13. REĢISTRĒT BACKUPU BLOCKCHAIN
+    // ==========================================
+    if (parsedSignature) {
+        try {
+            const manifestHash = ethers.id(manifestTxId);
+            const deadline = Math.floor(Date.now() / 1000) + CONFIG.SIGNATURE_TIMEOUT_SECONDS;
+            
+            // Nepieciešams signer — bet Action vidē nav privātās atslēgas.
+            // Tāpēc addBackup tiek izsaukts ar parakstu no lietotāja.
+            // Šeit mēs izmantojam provider, lai nosūtītu transakciju,
+            // bet vajag wallet ar privāto atslēgu, lai nosegotu gas.
+            // 
+            // RISINĀJUMS: addBackup funkciju var izsaukt jebkurš,
+            // jo validācija notiek pret parakstu. Bet transakcijas sūtītājam
+            // vajag ETH gas. Tāpēc izmantojam relayer vai pašu Action
+            // ar iebūvētu wallet.
+            
+            console.log('⚠️ Blockchain reģistrācija izlaista — nepieciešams signer ar ETH');
+            console.log(`📝 Dati reģistrācijai:`);
+            console.log(`   tokenId:      ${tokenId}`);
+            console.log(`   manifestHash: ${manifestHash}`);
+            console.log(`   merkleRoot:   ${merkleRoot}`);
+            console.log(`   manifestURI:  ${manifestURI}`);
+            console.log(`   deadline:     ${deadline}`);
+            
+        } catch (error) {
+            console.warn(`⚠️ Neizdevās reģistrēt backupu blockchain: ${error.message}`);
+        }
+    }
+
+    // ==========================================
+    // 14. REZULTĀTS
+    // ==========================================
+    const totalSize = Object.values(results).reduce((s, f) => s + f.size, 0);
+    
     console.log('=======================================================');
     console.log('✅ BACKUPS VEIKSMĪGS!');
-    console.log(`🔗 Manifests: ar://${manifestTxId}`);
-    console.log(`📊 Faili: ${Object.keys(results).length} mainīti`);
-    console.log(`📦 Izmērs: ${(totalSize / 1024).toFixed(1)} KB`);
-    console.log(`🌳 Merkle root: ${merkleRoot}`);
+    console.log(`🔗 Manifests: ${manifestURI}`);
+    console.log(`📊 Faili:     ${Object.keys(results).length} mainīti, ${Object.keys(unchanged).length} nemainīti`);
+    console.log(`📦 Izmērs:    ${(totalSize / 1024).toFixed(1)} KB`);
+    console.log(`🌳 Merkle:    ${merkleRoot}`);
+    console.log('=======================================================');
+
+    return {
+        status: 'success',
+        manifestTxId,
+        merkleRoot,
+        filesChanged: Object.keys(results).length,
+        totalSize,
+        tokenId: tokenId.toString()
+    };
 }
 
+/**
+ * Ielādē lock failu
+ */
 function loadLock(repoPath) {
-    const lockPath = path.join(repoPath, 'permarepo.lock.json');
-    if (!fs.existsSync(lockPath)) return {};
-    try { return JSON.parse(fs.readFileSync(lockPath, 'utf-8')).files || {}; } catch { return {}; }
+    const lockPath = path.join(repoPath, CONFIG.LOCK_FILE_NAME);
+    if (!fs.existsSync(lockPath)) return { files: {} };
+    try {
+        const data = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+        return { files: data.files || {} };
+    } catch {
+        console.warn('⚠️ Bojāts lock fails — sākam no jauna');
+        return { files: {} };
+    }
 }
 
 module.exports = { backup };
