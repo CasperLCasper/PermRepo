@@ -41,10 +41,14 @@ async function init() {
 }
 
 async function payAndRedirect() {
-    const repo = document.getElementById('repoInput').value.trim();
+    let repo = document.getElementById('repoInput').value.trim();
     
-    if (!repo) {
-        showError('❌ Lūdzu, ievadi repozitorija nosaukumu');
+    // Notīra URL, ja lietotājs ievadījis pilnu saiti
+    repo = repo.replace(/^https?:\/\/permrepo\.pages\.dev\//, '');
+    repo = repo.replace(/^https?:\/\/.+\//, '');
+    
+    if (!repo || repo.includes('http') || !repo.includes('/')) {
+        showError('❌ Lūdzu, ievadi repozitorija nosaukumu (piem., lietotajs/repo)');
         return;
     }
     
