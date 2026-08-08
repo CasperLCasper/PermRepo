@@ -1,47 +1,67 @@
+// ============================================
+// PERMAREPO PARAKSTĪŠANAS LAPA
+// ============================================
+
+const CHAIN_ID = '0x14a34';
+const CHAIN_NAME = 'Base Sepolia';
+
 const params = new URLSearchParams(window.location.search);
 const repoFromUrl = params.get('repo') || '';
-const CHAIN_ID = '0x14a34';
-
-document.getElementById('repoInput').value = repoFromUrl;
-document.getElementById('timestamp').textContent = new Date().toLocaleString();
 
 let signer, userAddress;
 
 async function init() {
+    // Aizpildīt repo nosaukumu
+    document.getElementById('repoInput').value = repoFromUrl;
+    document.getElementById('timestamp').textContent = new Date().toLocaleString();
+    
     if (!window.ethereum) {
-        document.getElementById('error').textContent = '❌ Instalē MetaMask vai citu kripto maku';
+        showError('❌ Instalē MetaMask vai citu kripto maku');
         return;
     }
     
     try {
-        await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] });
-        const provider = new ethers.BrowserProvider(ethereum);
+        await ethereum.request({ 
+            method: 'wallet_switchEthereumChain', 
+            params: [{ chainId: CHAIN_ID }] 
+        });
+        
+        const provider = new ethers.BrowserProvider(window.ethereum);
         signer = await provider.getSigner();
         userAddress = await signer.getAddress();
         
-        document.getElementById('signButton').disabled = false;
-        document.getElementById('signButton').textContent = '✍️ Sign with Crypto Wallet';
-        document.getElementById('signButton').onclick = signAndRedirect;
-        document.getElementById('status').textContent = '✅ Gatavs parakstīšanai';
-    } catch(e) {
-        document.getElementById('error').textContent = '❌ Kļūda: ' + e.message;
+        const button = document.getElementById('signButton');
+        button.disabled = false;
+        button.textContent = '✍️ Parakstīt ar maku';
+        button.onclick = signAndRedirect;
+        
+        setStatus('✅ Gatavs parakstīšanai');
+    } catch (e) {
+        showError('❌ Kļūda: ' + e.message);
     }
 }
 
 async function signAndRedirect() {
     const repo = document.getElementById('repoInput').value.trim();
+    
     if (!repo) {
-        document.getElementById('error').textContent = '❌ Lūdzu, ievadi repozitorija nosaukumu';
+        showError('❌ Lūdzu, ievadi repozitorija nosaukumu');
         return;
     }
     
     try {
-        document.getElementById('signButton').disabled = true;
-        document.getElementById('signButton').textContent = '⏳ Gaida parakstu...';
-        document.getElementById('status').textContent = 'Lūdzu, apstiprini MetaMask...';
+        const button = document.getElementById('signButton');
+        button.disabled = true;
+        button.textContent = '⏳ Gaida parakstu...';
+        setStatus('Lūdzu, apstiprini MetaMask...');
         
         const timestamp = Math.floor(Date.now() / 1000);
-        const message = `PermRepo Backup Authorization\nRepository: ${repo}\nTimestamp: ${timestamp}\nAddress: ${userAddress}`;
+        const message = [
+            'PermRepo Backup Authorization',
+            `Repository: ${repo}`,
+            `Timestamp: ${timestamp}`,
+            `Address: ${userAddress}`
+        ].join('\n');
         
         const signature = await signer.signMessage(message);
         
@@ -52,23 +72,33 @@ async function signAndRedirect() {
             timestamp: timestamp
         };
         
-        const encodedPayload = encodeURIComponent(JSON.stringify(payload, null, 2));
+        const jsonBody = JSON.stringify(payload, null, 2);
+        const encodedBody = encodeURIComponent(jsonBody);
         const issueTitle = `[PermRepo Backup] ${userAddress.substring(0, 10)}...`;
-        const issueUrl = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(issueTitle)}&body=\`\`\`json\n${encodedPayload}\n\`\`\``;
+        const issueUrl = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(issueTitle)}&body=\`\`\`json\n${encodedBody}\n\`\`\``;
         
-        document.getElementById('status').textContent = '✅ Paraksts veiksmīgs! Novirzam...';
+        setStatus('✅ Paraksts veiksmīgs! Novirzam uz GitHub...');
         
         window.location.href = issueUrl;
         
-    } catch(e) {
+    } catch (e) {
         if (e.code === 'ACTION_REJECTED') {
-            document.getElementById('error').textContent = '❌ Parakstīšana atcelta';
+            showError('❌ Parakstīšana atcelta');
         } else {
-            document.getElementById('error').textContent = '❌ Kļūda: ' + e.message;
+            showError('❌ Kļūda: ' + e.message);
         }
-        document.getElementById('signButton').disabled = false;
-        document.getElementById('signButton').textContent = '✍️ Sign with Crypto Wallet';
+        const button = document.getElementById('signButton');
+        button.disabled = false;
+        button.textContent = '✍️ Parakstīt ar maku';
     }
+}
+
+function setStatus(message) {
+    document.getElementById('status').textContent = message;
+}
+
+function showError(message) {
+    document.getElementById('error').textContent = message;
 }
 
 init();
