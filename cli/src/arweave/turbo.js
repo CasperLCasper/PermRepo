@@ -30,10 +30,9 @@ class TurboUploader {
                 try {
                     console.log(`📤 Augšupielādē: ${filePath} (mēģinājums ${attempt}/${this.maxRetries})`);
                     
-                    const fileData = fs.readFileSync(fullPath);
-                    
-                    const result = await this.turbo.upload({
-                        data: fileData,
+                    const result = await this.turbo.uploadFile({
+                        fileStreamFactory: () => fs.createReadStream(fullPath),
+                        fileSizeFactory: () => info.size,
                         signal: AbortSignal.timeout(this.uploadTimeout),
                         dataItemOpts: {
                             tags: this._buildFileTags(repoName, filePath)
