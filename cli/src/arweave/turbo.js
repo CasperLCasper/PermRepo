@@ -28,28 +28,44 @@ class TurboUploader {
             
             for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
                 try {
-                    const result = await this.turbo.uploadFile({
-                        fileStreamFactory: () => fs.createReadStream(fullPath),
-                        fileSizeFactory: () => info.size,
+                    console.log(`📤 Augšupielādē: ${filePath} (mēģinājums ${attempt}/${this.maxRetries})`);
+                    
+                    const fileData = fs.readFileSync(fullPath);
+                    
+                    const result = await this.turbo.upload({
+                        data: fileData,
                         signal: AbortSignal.timeout(this.uploadTimeout),
                         dataItemOpts: {
                             tags: this._buildFileTags(repoName, filePath)
                         }
                     });
                     
-                    results[filePath] = { hash: info.hash, txId: result.id, size: info.size };
-                    console.log(`✅ Augšupielādēts: ${filePath}`);
+                    results[filePath] = {
+                        hash: info.hash,
+                        txId: result.id,
+                        size: info.size
+                    };
+                    
+                    console.log(`✅ Augšupielādēts: ${filePath} → ${result.id}`);
                     break;
+                    
                 } catch (error) {
                     lastError = error;
+                    console.warn(`⚠️ Kļūda augšupielādējot ${filePath}: ${error.message}`);
+                    
                     if (attempt < this.maxRetries) {
-                        await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+                        const waitTime = Math.pow(2, attempt) * 1000;
+                        console.log(`⏳ Gaida ${waitTime / 1000}s pirms nākamā mēģinājuma...`);
+                        await new Promise(resolve => setTimeout(resolve, waitTime));
                     }
                 }
             }
             
             if (!results[filePath]) {
-                throw new Error(`Neizdevās augšupielādēt ${filePath}: ${lastError?.message}`);
+                throw new Error(
+                    `Neizdevās augšupielādēt ${filePath} pēc ${this.maxRetries} mēģinājumiem. ` +
+                    `Pēdējā kļūda: ${lastError?.message || 'Nezināma kļūda'}`
+                );
             }
         }
         
@@ -57,14 +73,16 @@ class TurboUploader {
     }
 
     async uploadManifest(manifestData, repoName) {
-        const buffer = Buffer.from(JSON.stringify(manifestData, null, 2), 'utf-8');
+        const data = Buffer.from(JSON.stringify(manifestData, null, 2), 'utf-8');
         
         let lastError = null;
         
         for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
             try {
+                console.log(`📤 Augšupielādē manifestu (mēģinājums ${attempt}/${this.maxRetries})`);
+                
                 const result = await this.turbo.upload({
-                    data: buffer,
+                    data: data,
                     signal: AbortSignal.timeout(this.manifestTimeout),
                     dataItemOpts: {
                         tags: [
@@ -77,16 +95,25 @@ class TurboUploader {
                     }
                 });
                 
+                console.log(`✅ Manifests augšupielādēts: ${result.id}`);
                 return result.id;
+                
             } catch (error) {
                 lastError = error;
+                console.warn(`⚠️ Kļūda augšupielādējot manifestu: ${error.message}`);
+                
                 if (attempt < this.maxRetries) {
-                    await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+                    const waitTime = Math.pow(2, attempt) * 1000;
+                    console.log(`⏳ Gaida ${waitTime / 1000}s pirms nākamā mēģinājuma...`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
                 }
             }
         }
         
-        throw new Error(`Neizdevās augšupielādēt manifestu: ${lastError?.message}`);
+        throw new Error(
+            `Neizdevās augšupielādēt manifestu pēc ${this.maxRetries} mēģinājumiem. ` +
+            `Pēdējā kļūda: ${lastError?.message || 'Nezināma kļūda'}`
+        );
     }
 
     _buildFileTags(repoName, filePath) {
