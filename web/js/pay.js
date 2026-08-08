@@ -1,11 +1,13 @@
+// ============================================
+// PERMAREPO NFT KALŠANAS LAPA
+// ============================================
+
 const NFT_ADDRESS = '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
 const CHAIN_ID = '0x14a34';
+const CHAIN_NAME = 'Base Sepolia';
+
 const params = new URLSearchParams(window.location.search);
 const repo = params.get('repo') || '';
-
-if (repo) {
-    document.getElementById('repoInput').value = repo;
-}
 
 const ABI = ["function mintRepository(address,string) external returns(uint256)"];
 
@@ -13,22 +15,36 @@ let signer, userAddress;
 
 async function init() {
     if (!window.ethereum) {
-        document.getElementById('error').textContent = '❌ Instalē MetaMask vai citu kripto maku';
+        showError('❌ Instalē MetaMask vai citu kripto maku');
         return;
     }
     
     try {
-        await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: CHAIN_ID }] });
-        const provider = new ethers.BrowserProvider(ethereum);
+        // Pārslēgties uz pareizo ķēdi
+        await ethereum.request({ 
+            method: 'wallet_switchEthereumChain', 
+            params: [{ chainId: CHAIN_ID }] 
+        });
+        
+        const provider = new ethers.BrowserProvider(window.ethereum);
         signer = await provider.getSigner();
         userAddress = await signer.getAddress();
         
-        document.getElementById('mintButton').disabled = false;
-        document.getElementById('mintButton').textContent = '🔒 Generate NFT';
-        document.getElementById('mintButton').onclick = mintNFT;
-        document.getElementById('status').textContent = '✅ Gatavs kalšanai';
-    } catch(e) {
-        document.getElementById('error').textContent = '❌ Kļūda: ' + e.message;
+        // Aizpildīt repo nosaukumu
+        if (repo) {
+            document.getElementById('repoInput').value = repo;
+            document.getElementById('repoDisplay').textContent = repo;
+        }
+        
+        // Aktivizēt pogu
+        const button = document.getElementById('mintButton');
+        button.disabled = false;
+        button.textContent = '🔒 Izveidot NFT';
+        button.onclick = mintNFT;
+        
+        setStatus('✅ Gatavs kalšanai');
+    } catch (e) {
+        showError('❌ Kļūda: ' + e.message);
     }
 }
 
@@ -36,32 +52,48 @@ async function mintNFT() {
     const repo = document.getElementById('repoInput').value.trim();
     
     if (!repo) {
-        document.getElementById('error').textContent = '❌ Nav norādīts repozitorija nosaukums. Izmanto ?repo=lietotajs/repo';
+        showError('❌ Nav norādīts repozitorija nosaukums. Izmanto ?repo=lietotajs/repo');
         return;
     }
     
     try {
-        document.getElementById('mintButton').disabled = true;
-        document.getElementById('mintButton').textContent = '⏳ Gaida...';
-        document.getElementById('status').textContent = `Veido NFT priekš: ${repo}`;
-        document.getElementById('error').textContent = '';
+        const button = document.getElementById('mintButton');
+        button.disabled = true;
+        button.textContent = '⏳ Gaida apstiprinājumu...';
+        setStatus(`Veido NFT priekš: ${repo}`);
+        clearError();
         
         const contract = new ethers.Contract(NFT_ADDRESS, ABI, signer);
         const tx = await contract.mintRepository(userAddress, repo);
-        await tx.wait();
         
-        document.getElementById('status').textContent = `✅ NFT izveidots priekš: ${repo}`;
-        document.getElementById('mintButton').textContent = '✅ Gatavs';
+        setStatus('⏳ Gaida transakcijas apstiprinājumu...');
+        const receipt = await tx.wait();
         
-    } catch(e) {
+        setStatus(`✅ NFT izveidots priekš: ${repo}`);
+        button.textContent = '✅ Gatavs';
+        
+    } catch (e) {
         if (e.code === 'ACTION_REJECTED') {
-            document.getElementById('error').textContent = '❌ Transakcija atcelta';
+            showError('❌ Transakcija atcelta');
         } else {
-            document.getElementById('error').textContent = '❌ Kļūda: ' + e.message;
+            showError('❌ Kļūda: ' + e.message);
         }
-        document.getElementById('mintButton').disabled = false;
-        document.getElementById('mintButton').textContent = '🔒 Generate NFT';
+        const button = document.getElementById('mintButton');
+        button.disabled = false;
+        button.textContent = '🔒 Izveidot NFT';
     }
+}
+
+function setStatus(message) {
+    document.getElementById('status').textContent = message;
+}
+
+function showError(message) {
+    document.getElementById('error').textContent = message;
+}
+
+function clearError() {
+    document.getElementById('error').textContent = '';
 }
 
 init();
