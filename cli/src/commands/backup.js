@@ -28,98 +28,188 @@ async function backup(opts) {
     const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
 
     console.log('🚀 PermRepo — Inkrementāls backups');
-    console.log(`📦 Repo: ${repoName}`);
+    console.log('=======================================================');
+    console.log(`📦 Repozitorijs: ${repoName}`);
     console.log(`👛 Maks: ${walletAddress}`);
 
-    // NFT pārbaude
+    // ==========================================
+    // 1. NFT PĀRBAUDE
+    // ==========================================
     const tokenId = await getExistingNFT(provider, CONFIG.NFT_ADDRESS, repoHash);
+    
     if (tokenId === 0n || tokenId === 0) {
-        console.log(`❌ Nav NFT. Izveido: ${CONFIG.WEB_URL}${CONFIG.NFT_PAGE}?repo=${encodeURIComponent(repoName)}`);
+        console.log('❌ Nav izveidots NFT šim repozitorijam.');
+        console.log(`🔗 Izveidot NFT: ${CONFIG.WEB_URL}${CONFIG.NFT_PAGE}?repo=${encodeURIComponent(repoName)}`);
+        console.log('⚠️ Pēc NFT izveides, izveido jaunu Issue, lai palaistu backup.');
         return;
     }
 
-    // Īpašnieka pārbaude
+    // ==========================================
+    // 2. NFT ĪPAŠNIEKA PĀRBAUDE
+    // ==========================================
     const nftContract = new ethers.Contract(CONFIG.NFT_ADDRESS, ['function ownerOf(uint256) view returns (address)'], provider);
     const nftOwner = await nftContract.ownerOf(tokenId);
+    
     if (nftOwner.toLowerCase() !== walletAddress.toLowerCase()) {
         console.log('❌ NFT nepieder šim makam.');
+        console.log(`   NFT īpašnieks: ${nftOwner}`);
+        console.log(`   Tavs maks:     ${walletAddress}`);
         return;
     }
+    console.log('✅ NFT īpašumtiesības apstiprinātas');
 
-    // Abonementa pārbaude
+    // ==========================================
+    // 3. ABONEMENTA PĀRBAUDE
+    // ==========================================
     const subscribed = await checkSubscription(provider, CONFIG.SUBSCRIPTION_ADDRESS, tokenId);
+    
     if (!subscribed) {
-        console.log(`❌ Nav abonementa. Aktivizē: ${CONFIG.WEB_URL}${CONFIG.SUBSCRIBE_PAGE}`);
+        console.log(`❌ Nav aktīva abonementa.`);
+        console.log(`🔗 Aktivizēt abonementu: ${CONFIG.WEB_URL}${CONFIG.SUBSCRIBE_PAGE}`);
+        console.log('⚠️ Pēc abonementa iegādes, izveido jaunu Issue, lai palaistu backup.');
+        return;
+    }
+    console.log('✅ Abonements aktīvs');
+
+    // ==========================================
+    // 4. GLABĀŠANAS PARAKSTA VERIFIKĀCIJA
+    // ==========================================
+    const issueBody = process.env.ISSUE_BODY;
+    
+    if (!issueBody) {
+        console.log('✍️ Nepieciešams paraksts glabāšanas apmaksai.');
+        console.log(`🔗 Apmaksāt glabāšanu: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}`);
+        console.log('⚠️ Pēc parakstīšanas, izveido jaunu Issue.');
         return;
     }
 
-    // Paraksta verifikācija
-    const issueBody = process.env.ISSUE_BODY;
-    if (issueBody) {
-        try {
-            const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
-            if (!jsonMatch) { console.log('❌ Nav JSON datu.'); return; }
-            const payload = JSON.parse(jsonMatch[1]);
-            const { signature, message, timestamp } = payload;
-            if (Math.floor(Date.now() / 1000) - timestamp > CONFIG.SIGNATURE_TIMEOUT_SECONDS) {
-                console.log('❌ Paraksts novecojis.'); return;
-            }
-            const recovered = ethers.verifyMessage(message, signature);
-            if (recovered.toLowerCase() !== walletAddress.toLowerCase()) {
-                console.log('❌ Paraksts neatbilst.'); return;
-            }
-            console.log('✅ Paraksts verificēts');
-        } catch (e) {
-            console.log('❌ Kļūda:', e.message);
+    try {
+        const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
+        if (!jsonMatch) {
+            console.log('❌ Neizdevās atrast JSON datus Issue aprakstā.');
+            console.log(`✍️ Nepieciešams paraksts glabāšanas apmaksai.`);
+            console.log(`🔗 Apmaksāt glabāšanu: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}`);
             return;
         }
+        
+        const payload = JSON.parse(jsonMatch[1]);
+        const { signature, message, timestamp } = payload;
+        
+        if (Math.floor(Date.now() / 1000) - timestamp > CONFIG.SIGNATURE_TIMEOUT_SECONDS) {
+            console.log('❌ Paraksts ir novecojis (>10 min).');
+            console.log(`🔗 Apmaksāt glabāšanu no jauna: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}`);
+            return;
+        }
+        
+        const recovered = ethers.verifyMessage(message, signature);
+        if (recovered.toLowerCase() !== walletAddress.toLowerCase()) {
+            console.log('❌ Paraksts neatbilst maka adresei.');
+            return;
+        }
+        console.log('✅ Glabāšanas apmaksa verificēta');
+    } catch (e) {
+        console.log('❌ Kļūda verificējot parakstu:', e.message);
+        return;
     }
 
-    // Failu skenēšana
+    // ==========================================
+    // 5. FAILU SKENĒŠANA
+    // ==========================================
+    console.log('📊 Skenē failus...');
     const currentFiles = scanFiles(repoPath);
+    console.log(`   Atrasti ${Object.keys(currentFiles).length} faili`);
+    
     const lockData = loadLock(repoPath);
     const { unchanged, changed, deleted } = compareWithLock(currentFiles, lockData);
     
+    console.log(`   Nemainīti: ${Object.keys(unchanged).length}`);
+    console.log(`   Mainīti:   ${Object.keys(changed).length}`);
+    console.log(`   Dzēsti:    ${deleted.length}`);
+    
     if (Object.keys(changed).length === 0 && deleted.length === 0) {
-        console.log('✅ Nav izmaiņu.');
+        console.log('✅ Nav izmaiņu kopš pēdējā backupa.');
         return;
     }
 
-    console.log(`📊 Mainīti: ${Object.keys(changed).length}, Dzēsti: ${deleted.length}`);
-
-    // Merkle root
+    // ==========================================
+    // 6. MERKLE ROOT
+    // ==========================================
     const allFiles = { ...unchanged, ...changed };
     const { root: merkleRoot } = createMerkleTree(allFiles);
+    console.log(`🌳 Merkle root: ${merkleRoot}`);
 
-    // Augšupielāde
+    // ==========================================
+    // 7. AUGŠUPIELĀDE UZ ARWEAVE
+    // ==========================================
+    console.log('📤 Augšupielādē failus uz Arweave...');
     const uploader = new TurboUploader();
     const results = await uploader.uploadChangedFiles(repoPath, changed, repoName);
+    console.log(`✅ Augšupielādēti ${Object.keys(results).length} faili`);
+
+    // ==========================================
+    // 8. MANIFESTS
+    // ==========================================
     const manifest = createManifest(unchanged, results, repoName);
     const manifestTxId = await uploader.uploadManifest(manifest, repoName);
+    const manifestURI = `ar://${manifestTxId}`;
+    console.log(`📋 Manifests: ${manifestURI}`);
 
-    // Lokālā kopija
-    const backupDir = path.join(repoPath, CONFIG.PERMAREPO_DIR, CONFIG.BACKUPS_DIR);
-    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    fs.writeFileSync(path.join(backupDir, `manifest-${ts}.json`), JSON.stringify(manifest, null, 2));
+    // ==========================================
+    // 9. LOKĀLĀ KOPIJA
+    // ==========================================
+    const permRepoDir = path.join(repoPath, CONFIG.PERMAREPO_DIR);
+    const backupDir = path.join(permRepoDir, CONFIG.BACKUPS_DIR);
+    
+    if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
+    }
+    
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const localPath = path.join(backupDir, `manifest-${timestamp}.json`);
+    fs.writeFileSync(localPath, JSON.stringify(manifest, null, 2));
+    console.log(`💾 Lokālā kopija: ${localPath}`);
 
-    // Lock fails
+    // ==========================================
+    // 10. LOCK FAILS
+    // ==========================================
     saveLock(repoPath, unchanged, results);
+    if (deleted.length > 0) {
+        console.log(`🗑️ Dzēstie faili izņemti no lock faila: ${deleted.join(', ')}`);
+    }
 
+    // ==========================================
+    // 11. REZULTĀTS
+    // ==========================================
     const totalSize = Object.values(results).reduce((s, f) => s + f.size, 0);
+    
+    console.log('=======================================================');
     console.log('✅ BACKUPS VEIKSMĪGS!');
-    console.log(`🔗 Manifests: ar://${manifestTxId}`);
-    console.log(`📊 Faili: ${Object.keys(results).length}`);
-    console.log(`📦 Izmērs: ${(totalSize / 1024).toFixed(1)} KB`);
-    console.log(`🌳 Merkle: ${merkleRoot}`);
+    console.log(`🔗 Manifests: ${manifestURI}`);
+    console.log(`📊 Faili:     ${Object.keys(results).length} mainīti, ${Object.keys(unchanged).length} nemainīti`);
+    console.log(`📦 Izmērs:    ${(totalSize / 1024).toFixed(1)} KB`);
+    console.log(`🌳 Merkle:    ${merkleRoot}`);
+    console.log('=======================================================');
 
-    return { status: 'success', manifestTxId, merkleRoot, filesChanged: Object.keys(results).length, totalSize, tokenId: tokenId.toString() };
+    return {
+        status: 'success',
+        manifestTxId,
+        merkleRoot,
+        filesChanged: Object.keys(results).length,
+        totalSize,
+        tokenId: tokenId.toString()
+    };
 }
 
 function loadLock(repoPath) {
     const lockPath = path.join(repoPath, CONFIG.LOCK_FILE_NAME);
     if (!fs.existsSync(lockPath)) return { files: {} };
-    try { return { files: JSON.parse(fs.readFileSync(lockPath, 'utf-8')).files || {} }; } catch { return { files: {} }; }
+    try {
+        const data = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+        return { files: data.files || {} };
+    } catch {
+        console.warn('⚠️ Bojāts lock fails — sākam no jauna');
+        return { files: {} };
+    }
 }
 
 module.exports = { backup };
