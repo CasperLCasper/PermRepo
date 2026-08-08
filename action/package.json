@@ -1,11 +1,15 @@
 {
   "name": "perm-repo-action",
   "version": "1.0.0",
-  "description": "PermRepo GitHub Action",
+  "description": "PermRepo GitHub Action — verificē, pārbauda un izsauc backupu",
   "main": "src/index.js",
-  "scripts": { "build": "ncc build src/index.js -o dist" },
+  "scripts": {
+    "build": "ncc build src/index.js -o dist"
+  },
   "dependencies": {
-    "@actions/core": "^2.0.0"
+    "@actions/core": "^2.0.0",
+    "@actions/github": "^6.0.0",
+    "ethers": "^6.13.2"
   },
   "devDependencies": {
     "@vercel/ncc": "^0.38.1"
