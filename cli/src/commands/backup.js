@@ -9,6 +9,12 @@ const { createMerkleTree } = require('../merkle/tree');
 const { getExistingNFT } = require('../blockchain/nft');
 const { checkSubscription } = require('../blockchain/subscription');
 
+function getRepoHash(repoName) {
+    return ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(['string'], [repoName])
+    );
+}
+
 async function backup(opts) {
     const walletAddress = opts.wallet || CONFIG.WALLET_ADDRESS;
     if (!walletAddress) {
@@ -17,8 +23,8 @@ async function backup(opts) {
     }
 
     const repoPath = path.resolve(opts.repo || '.');
-    let repoName = getRepoName(repoPath).trim().toLowerCase();
-    const repoHash = ethers.id(repoName);
+    const repoName = getRepoName(repoPath).trim();
+    const repoHash = getRepoHash(repoName);
     const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
 
     console.log('🚀 PermRepo — Inkrementāls backups');
