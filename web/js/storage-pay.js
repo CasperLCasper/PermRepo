@@ -76,9 +76,10 @@ async function payAndRedirect() {
         };
         
         const jsonBody = JSON.stringify(payload, null, 2);
-        const encodedBody = encodeURIComponent(jsonBody);
+        const body = '```json\n' + jsonBody + '\n```';
+        const encodedBody = encodeURIComponent(body);
         const issueTitle = `[PermRepo Backup] ${userAddress.substring(0, 10)}...`;
-        const issueUrl = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(issueTitle)}&body=\`\`\`json\n${encodedBody}\n\`\`\``;
+        const issueUrl = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(issueTitle)}&body=${encodedBody}`;
         
         setStatus('✅ Paraksts veiksmīgs! Novirzam uz GitHub...');
         
