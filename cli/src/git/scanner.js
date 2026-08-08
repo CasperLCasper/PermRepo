@@ -1,21 +1,27 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const CONFIG = require('../../../shared/config');
 
+/**
+ * Skenē visus failus repozitorijā, ignorējot noteiktus patternus
+ * @param {string} rootPath - Repo saknes ceļš
+ * @returns {Object} { "relatīvais/ceļš": { hash, size } }
+ */
 function scanFiles(rootPath) {
     const files = {};
-    const ignore = [
-        '.git', 'node_modules', '.next', 'dist', 'build',
-        '.cache', 'coverage', '.env', '.env.local', 'permarepo.lock.json'
-    ];
+    const ignore = CONFIG.IGNORE_PATTERNS;
+    const maxFileSize = CONFIG.MAX_FILE_SIZE_BYTES;
 
     const shouldIgnore = (relativePath) => {
-        return ignore.some(pattern => {
-            if (relativePath === pattern) return true;
-            if (relativePath.startsWith(pattern + '/')) return true;
-            if (relativePath.includes('/' + pattern + '/')) return true;
-            return false;
-        });
+        const parts = relativePath.split(path.sep);
+        return parts.some(part => ignore.includes(part)) ||
+               ignore.some(pattern => {
+                   if (relativePath === pattern) return true;
+                   if (relativePath.startsWith(pattern + path.sep)) return true;
+                   if (relativePath.includes(path.sep + pattern + path.sep)) return true;
+                   return false;
+               });
     };
 
     const walk = (dir) => {
@@ -23,7 +29,7 @@ function scanFiles(rootPath) {
         try {
             entries = fs.readdirSync(dir, { withFileTypes: true });
         } catch (error) {
-            console.warn({ warning: 'cannot_read_directory', path: dir, error: error.message });
+            console.warn(`⚠️ Nevar nolasīt direktoriju: ${dir} — ${error.message}`);
             return;
         }
 
@@ -37,13 +43,20 @@ function scanFiles(rootPath) {
                 walk(fullPath);
             } else if (entry.isFile()) {
                 try {
+                    const stat = fs.statSync(fullPath);
+                    
+                    if (stat.size > maxFileSize) {
+                        console.warn(`⚠️ Izlaists pārāk liels fails: ${relativePath} (${(stat.size / 1024 / 1024).toFixed(1)}MB)`);
+                        continue;
+                    }
+                    
                     const content = fs.readFileSync(fullPath);
                     files[relativePath] = {
-                        hash: crypto.createHash('sha256').update(content).digest('hex'),
+                        hash: crypto.createHash(CONFIG.MERKLE_HASH_ALGORITHM).update(content).digest('hex'),
                         size: content.length
                     };
                 } catch (error) {
-                    console.warn({ warning: 'cannot_read_file', path: relativePath, error: error.message });
+                    console.warn(`⚠️ Nevar nolasīt failu: ${relativePath} — ${error.message}`);
                 }
             }
         }
@@ -53,20 +66,32 @@ function scanFiles(rootPath) {
     return files;
 }
 
+/**
+ * Salīdzina pašreizējos failus ar lock failu
+ * @param {Object} current - Pašreizējie faili
+ * @param {Object} lock - Lock faila dati { files: { "ceļš": { hash, txId, size } } }
+ * @returns {Object} { unchanged, changed, deleted }
+ */
 function compareWithLock(current, lock = {}) {
+    const lockFiles = lock.files || lock;
     const unchanged = {};
     const changed = {};
     const deleted = [];
 
+    // Atrast nemainītos un mainītos failus
     for (const [filePath, info] of Object.entries(current)) {
-        if (lock[filePath] && lock[filePath].hash === info.hash) {
-            unchanged[filePath] = { ...info, txId: lock[filePath].txId };
+        if (lockFiles[filePath] && lockFiles[filePath].hash === info.hash) {
+            unchanged[filePath] = { 
+                ...info, 
+                txId: lockFiles[filePath].txId 
+            };
         } else {
             changed[filePath] = info;
         }
     }
 
-    for (const filePath of Object.keys(lock)) {
+    // Atrast dzēstos failus
+    for (const filePath of Object.keys(lockFiles)) {
         if (!current[filePath]) {
             deleted.push(filePath);
         }
@@ -75,9 +100,16 @@ function compareWithLock(current, lock = {}) {
     return { unchanged, changed, deleted };
 }
 
+/**
+ * Saglabā lock failu
+ * @param {string} repoPath - Repo ceļš
+ * @param {Object} unchanged - Nemainītie faili
+ * @param {Object} uploaded - Augšupielādētie faili
+ */
 function saveLock(repoPath, unchanged, uploaded) {
     const files = {};
 
+    // Apvieno nemainītos un jaunos failus
     for (const [filePath, info] of Object.entries(unchanged)) {
         files[filePath] = {
             hash: info.hash,
@@ -94,76 +126,79 @@ function saveLock(repoPath, unchanged, uploaded) {
         };
     }
 
+    // Sakārto alfabētiski
     const sorted = {};
     Object.keys(files)
         .sort((a, b) => a.localeCompare(b))
-        .forEach(k => { sorted[k] = files[k]; });
+        .forEach(key => { 
+            sorted[key] = files[key]; 
+        });
 
-    const lockPath = path.join(repoPath, 'permarepo.lock.json');
+    const lockPath = path.join(repoPath, CONFIG.LOCK_FILE_NAME);
     const data = {
-        version: '1.0.0',
+        version: CONFIG.LOCK_FILE_VERSION,
         files: sorted,
-        lastBackup: new Date().toISOString()
+        totalFiles: Object.keys(sorted).length,
+        lastBackup: new Date().toISOString(),
+        generatedBy: `${CONFIG.APP_NAME} v${CONFIG.APP_VERSION}`
     };
 
     try {
         fs.writeFileSync(lockPath, JSON.stringify(data, null, 2));
+        console.log(`🔒 Lock fails saglabāts: ${lockPath} (${Object.keys(sorted).length} faili)`);
     } catch (error) {
-        console.warn({ warning: 'cannot_save_lock_file', error: error.message });
+        console.warn(`⚠️ Nevar saglabāt lock failu: ${error.message}`);
     }
 }
 
+/**
+ * Iegūst repozitorija nosaukumu no dažādiem avotiem
+ * @param {string} repoPath - Repo ceļš
+ * @returns {string}
+ */
 function getRepoName(repoPath) {
-    // 1. GitHub Actions vidē — izmanto GITHUB_REPOSITORY
+    // 1. GitHub Actions vide
     if (process.env.GITHUB_REPOSITORY) {
-        console.log('DEBUG getRepoName: using GITHUB_REPOSITORY:', process.env.GITHUB_REPOSITORY);
         return process.env.GITHUB_REPOSITORY;
     }
 
-    // 2. GitLab CI vidē — izmanto CI_PROJECT_PATH
+    // 2. GitLab CI vide
     if (process.env.CI_PROJECT_PATH) {
-        console.log('DEBUG getRepoName: using CI_PROJECT_PATH:', process.env.CI_PROJECT_PATH);
         return process.env.CI_PROJECT_PATH;
     }
 
-    // 3. Bitbucket vidē — izmanto BITBUCKET_REPO_FULL_NAME
+    // 3. Bitbucket vide
     if (process.env.BITBUCKET_REPO_FULL_NAME) {
-        console.log('DEBUG getRepoName: using BITBUCKET_REPO_FULL_NAME:', process.env.BITBUCKET_REPO_FULL_NAME);
         return process.env.BITBUCKET_REPO_FULL_NAME;
     }
 
-    // 4. Mēģina nolasīt no .git/config faila
+    // 4. .git/config fails
     const gitConfigPath = path.join(repoPath, '.git', 'config');
     if (fs.existsSync(gitConfigPath)) {
         try {
             const configContent = fs.readFileSync(gitConfigPath, 'utf-8');
-            const urlMatch = configContent.match(/url = (.+)/);
+            const urlMatch = configContent.match(/url\s*=\s*(.+)/);
             if (urlMatch) {
                 const remoteUrl = urlMatch[1].trim();
-                console.log('DEBUG getRepoName: from .git/config remoteUrl:', remoteUrl);
-                const repoMatch = remoteUrl.match(/\/([^/]+\/[^/]+?)(\.git)?$/);
+                const repoMatch = remoteUrl.match(/[:\/]([^\/]+\/[^\/]+?)(\.git)?$/);
                 if (repoMatch) {
-                    console.log('DEBUG getRepoName: from .git/config result:', repoMatch[1]);
                     return repoMatch[1];
                 }
             }
         } catch (error) {
-            console.warn({ warning: 'cannot_read_git_config', error: error.message });
+            console.warn(`⚠️ Nevar nolasīt .git/config: ${error.message}`);
         }
     }
 
     // 5. Fallback — direktorijas nosaukums
     try {
         if (fs.existsSync(repoPath) && fs.statSync(repoPath).isDirectory()) {
-            const fallback = path.basename(repoPath);
-            console.log('DEBUG getRepoName: fallback:', fallback);
-            return fallback;
+            return path.basename(path.resolve(repoPath));
         }
     } catch (error) {
-        console.warn({ warning: 'cannot_read_directory', path: repoPath, error: error.message });
+        console.warn(`⚠️ Nevar noteikt direktorijas nosaukumu: ${error.message}`);
     }
 
-    console.log('DEBUG getRepoName: unknown-repo');
     return 'unknown-repo';
 }
 
