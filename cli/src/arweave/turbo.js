@@ -32,7 +32,7 @@ class TurboUploader {
                     
                     const fileData = fs.readFileSync(fullPath);
                     
-                    const result = await this.turbo.upload({
+                    const result = await this.turbo.uploadRawX402Data({
                         data: fileData,
                         signal: AbortSignal.timeout(this.uploadTimeout),
                         dataItemOpts: {
@@ -81,7 +81,7 @@ class TurboUploader {
             try {
                 console.log(`📤 Augšupielādē manifestu (mēģinājums ${attempt}/${this.maxRetries})`);
                 
-                const result = await this.turbo.upload({
+                const result = await this.turbo.uploadRawX402Data({
                     data: data,
                     signal: AbortSignal.timeout(this.manifestTimeout),
                     dataItemOpts: {
