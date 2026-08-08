@@ -10,13 +10,16 @@ inputs:
     required: true
   subscription_address:
     description: 'Subscription līguma adrese'
-    required: true
+    required: false
+    default: '0x29f1ed42C6C2E157B7571f9585a9C9Dd6fBcda51'
   nft_address:
     description: 'NFT līguma adrese'
-    required: true
+    required: false
+    default: '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4'
   registry_address:
     description: 'Registry līguma adrese'
-    required: true
+    required: false
+    default: '0x2a5a7F926046BB1A011D9082aB70BF38bfcb9dc9'
   rpc_url:
     description: 'Base RPC URL'
     required: false
@@ -34,4 +37,4 @@ outputs:
     description: 'Backupa statuss'
 runs:
   using: 'node20'
-  main: 'dist/index.js'
+  main: 'src/index.js'
