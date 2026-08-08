@@ -1,4 +1,8 @@
 const crypto = require('node:crypto');
+const CONFIG = require('../../../shared/config');
+
+const HASH_ALGORITHM = CONFIG.MERKLE_HASH_ALGORITHM;
+const EMPTY_ROOT = CONFIG.MERKLE_EMPTY_ROOT;
 
 /**
  * Izveido Merkle koku no failu saraksta
@@ -6,7 +10,7 @@ const crypto = require('node:crypto');
  * @returns {Object} { root, tree, leaves }
  */
 function createMerkleTree(files) {
-    // 1. Izveido lapas no failu hash
+    // 1. Izveido lapas no failu hash, sakārtotas pēc ceļa
     const leaves = Object.entries(files)
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([filePath, info]) => ({
@@ -16,11 +20,19 @@ function createMerkleTree(files) {
         }));
 
     if (leaves.length === 0) {
-        return { root: '0x0000000000000000000000000000000000000000000000000000000000000000', tree: [], leaves: [] };
+        return { 
+            root: EMPTY_ROOT, 
+            tree: [], 
+            leaves: [] 
+        };
     }
 
     if (leaves.length === 1) {
-        return { root: leaves[0].hash, tree: [leaves], leaves };
+        return { 
+            root: leaves[0].hash, 
+            tree: [leaves], 
+            leaves 
+        };
     }
 
     // 2. Veido koku no apakšas uz augšu
@@ -32,13 +44,13 @@ function createMerkleTree(files) {
 
         for (let i = 0; i < currentLevel.length; i += 2) {
             const left = currentLevel[i];
-            const right = currentLevel[i + 1] || left; // Ja nepāra skaits, dublē pēdējo
+            const right = currentLevel[i + 1] || left; // Nepāra skaits — dublē pēdējo
 
             const combined = crypto
-                .createHash('sha256')
+                .createHash(HASH_ALGORITHM)
                 .update(Buffer.concat([
-                    Buffer.from(left.slice(2), 'hex'),
-                    Buffer.from(right.slice(2), 'hex')
+                    Buffer.from(left.startsWith('0x') ? left.slice(2) : left, 'hex'),
+                    Buffer.from(right.startsWith('0x') ? right.slice(2) : right, 'hex')
                 ]))
                 .digest('hex');
 
@@ -56,13 +68,12 @@ function createMerkleTree(files) {
 
 /**
  * Pārbauda faila integritāti pret Merkle root
- * @param {string} filePath - Faila ceļš
- * @param {string} fileHash - Faila SHA-256 hash
+ * @param {string} fileHash - Faila hash
  * @param {string} merkleRoot - Merkle tree root
- * @param {Array} proof - Merkle proof (masīvs ar kaimiņu hash)
+ * @param {Array} proof - Merkle proof
  * @returns {boolean}
  */
-function verifyFile(filePath, fileHash, merkleRoot, proof) {
+function verifyFile(fileHash, merkleRoot, proof) {
     let currentHash = fileHash;
 
     for (const { position, hash } of proof) {
@@ -70,10 +81,10 @@ function verifyFile(filePath, fileHash, merkleRoot, proof) {
         const right = position === 'right' ? currentHash : hash;
 
         currentHash = '0x' + crypto
-            .createHash('sha256')
+            .createHash(HASH_ALGORITHM)
             .update(Buffer.concat([
-                Buffer.from(left.slice(2), 'hex'),
-                Buffer.from(right.slice(2), 'hex')
+                Buffer.from(left.startsWith('0x') ? left.slice(2) : left, 'hex'),
+                Buffer.from(right.startsWith('0x') ? right.slice(2) : right, 'hex')
             ]))
             .digest('hex');
     }
@@ -84,7 +95,7 @@ function verifyFile(filePath, fileHash, merkleRoot, proof) {
 /**
  * Ģenerē Merkle proof vienam failam
  * @param {Object} files - Visi faili
- * @param {string} targetPath - Faila ceļš, kuram ģenerē proof
+ * @param {string} targetPath - Mērķa faila ceļš
  * @returns {Array} Merkle proof
  */
 function generateProof(files, targetPath) {
@@ -116,10 +127,10 @@ function generateProof(files, targetPath) {
             const right = currentLevel[i + 1] || left;
 
             const combined = crypto
-                .createHash('sha256')
+                .createHash(HASH_ALGORITHM)
                 .update(Buffer.concat([
-                    Buffer.from(left.slice(2), 'hex'),
-                    Buffer.from(right.slice(2), 'hex')
+                    Buffer.from(left.startsWith('0x') ? left.slice(2) : left, 'hex'),
+                    Buffer.from(right.startsWith('0x') ? right.slice(2) : right, 'hex')
                 ]))
                 .digest('hex');
 
