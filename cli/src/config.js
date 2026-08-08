@@ -28,9 +28,9 @@ const CONFIG = {
     // WEB URL
     // ==========================================
     WEB_URL: 'https://permrepo.pages.dev',
-    SIGN_PAGE: '/sign.html',
-    PAY_PAGE: '/pay.html',
+    NFT_PAGE: '/nft.html',
     SUBSCRIBE_PAGE: '/subscribe.html',
+    STORAGE_PAY_PAGE: '/storage-pay.html',
     
     // ==========================================
     // VIENĪGAIS NO process.env
