@@ -1,0 +1,28 @@
+name: PermRepo Backup
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+
+jobs:
+  backup:
+    if: contains(github.event.issue.title, '[PermRepo Backup]') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+      
+      - name: Run PermRepo Backup
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WALLET_ADDRESS: ${{ secrets.WALLET_ADDRESS }}
+        run: npx perm-repo backup --repo .
