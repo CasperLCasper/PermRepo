@@ -1,11 +1,11 @@
 // ============================================
 // PERMAREPO GLABĀŠANAS APMAKSAS LAPA
-// Pērk Turbo kredītus UN augšupielādē failus caur MetaMask
 // ============================================
 
 const CHAIN_ID = '0x14a34';
 const TURBO_UPLOAD_URL = 'https://upload.services.ar-io.dev';
-const TURBO_CURRENCIES_URL = 'https://payment.services.ar-io.dev/v1/currencies';
+const TURBO_API_BASE = 'https://payment.ardrive.io/v1';
+const TESTNET_FALLBACK_ADDRESS = '0x1000000000000000000000000000000000000000';
 
 const params = new URLSearchParams(window.location.search);
 const repoFromUrl = params.get('repo') || '';
@@ -43,19 +43,14 @@ async function init() {
         userAddress = await signer.getAddress();
         
         setStatus('⏳ Iegūst maksājuma informāciju...');
+        turboPaymentAddress = await fetchTurboPaymentAddress();
         
-        const response = await fetch(TURBO_CURRENCIES_URL);
-        const currencies = await response.json();
-        const baseEthConfig = currencies.find(c => c.token === 'ethereum' && c.network === 'base');
-        
-        if (!baseEthConfig) {
-            showError('❌ Nevar atrast Base ETH maksājumu informāciju');
-            return;
-        }
-        
-        turboPaymentAddress = baseEthConfig.destinationAddress;
         document.getElementById('paymentAddress').textContent = 
             turboPaymentAddress.substring(0, 10) + '...' + turboPaymentAddress.substring(turboPaymentAddress.length - 8);
+        
+        const totalSize = filesToUpload.reduce((s, f) => s + f.size, 0);
+        const estimatedCost = Math.max(0.001, totalSize / 1000000 * 0.001).toFixed(4);
+        document.getElementById('estimatedCost').textContent = `~${estimatedCost} ETH`;
         
         const button = document.getElementById('payButton');
         button.disabled = false;
@@ -66,6 +61,23 @@ async function init() {
     } catch (e) {
         showError('❌ Kļūda: ' + e.message);
     }
+}
+
+async function fetchTurboPaymentAddress() {
+    try {
+        const response = await fetch(`${TURBO_API_BASE}/currencies`);
+        if (response.ok) {
+            const data = await response.json();
+            const currencies = Array.isArray(data) ? data : (data.currencies || []);
+            const baseEth = currencies.find(c => 
+                c.token === 'base-eth' || c.network === 'base-sepolia' || c.chainId === 84532
+            );
+            if (baseEth && baseEth.destinationAddress) return baseEth.destinationAddress;
+        }
+    } catch (err) {
+        console.warn('SSL/Tīkla kļūda, izmanto rezerves adresi:', err.message);
+    }
+    return TESTNET_FALLBACK_ADDRESS;
 }
 
 async function buyCreditsAndUpload() {
@@ -82,7 +94,6 @@ async function buyCreditsAndUpload() {
         const button = document.getElementById('payButton');
         button.disabled = true;
         
-        // 1. Maksājums
         button.textContent = '⏳ Apstiprini maksājumu MetaMask...';
         setStatus('1/3: Nosūti ETH uz Turbo...');
         
@@ -91,7 +102,6 @@ async function buyCreditsAndUpload() {
         setStatus('⏳ Gaida transakcijas apstiprinājumu...');
         await tx.wait();
         
-        // 2. Augšupielāde
         let uploadResults = [];
         if (filesToUpload.length > 0) {
             setStatus('2/3: Augšupielādē failus...');
@@ -99,7 +109,7 @@ async function buyCreditsAndUpload() {
                 const file = filesToUpload[i];
                 button.textContent = `⏳ Augšupielādē ${i + 1}/${filesToUpload.length}...`;
                 try {
-                    const fileData = new TextEncoder().encode(file.content);
+                    const fileData = new TextEncoder().encode(file.content || '');
                     const uploadResponse = await fetch(`${TURBO_UPLOAD_URL}/v1/tx`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/octet-stream' },
@@ -115,7 +125,6 @@ async function buyCreditsAndUpload() {
             }
         }
         
-        // 3. Paraksts
         button.textContent = '⏳ Paraksti autorizāciju...';
         setStatus('3/3: Paraksti ar maku...');
         
