@@ -1,6 +1,6 @@
 // ============================================
-// PERMAREPO GLABĀŠANAS APMAKSAS LAPA
-// Lejupielādē failus, pērk kredītus, augšupielādē, veido manifestu
+// PERMAREPO GLABASANAS APMAKSAS LAPA
+// Lejupielade failus, perk kreditus, augsupielade, veido manifestu
 // ============================================
 
 const CHAIN_ID = '0x14a34';
@@ -29,13 +29,13 @@ async function init() {
             console.log('filesToUpload:', filesToUpload);
             document.getElementById('fileCount').textContent = filesToUpload.length + ' faili';
         } catch (e) {
-            console.error('Kļūda parsējot filesParam:', e);
+            console.error('Kluda parsejot filesParam:', e);
             filesToUpload = [];
         }
     }
     
     if (!window.ethereum) {
-        showError('❌ Instalē MetaMask vai citu kripto maku');
+        showError('Instale MetaMask vai citu kripto maku');
         return;
     }
     
@@ -50,7 +50,7 @@ async function init() {
         userAddress = await signer.getAddress();
         console.log('userAddress:', userAddress);
         
-        setStatus('⏳ Iegūst maksājuma informāciju...');
+        setStatus('Iegust maksajuma informaciju...');
         turboPaymentAddress = await fetchTurboPaymentAddress();
         console.log('turboPaymentAddress:', turboPaymentAddress);
         
@@ -64,13 +64,13 @@ async function init() {
         
         const button = document.getElementById('payButton');
         button.disabled = false;
-        button.textContent = filesToUpload.length > 0 ? '💳 Pirkt kredītus un augšupielādēt' : '💳 Pirkt kredītus un parakstīt';
+        button.textContent = filesToUpload.length > 0 ? 'Pirkt kreditus un augsupieladet' : 'Pirkt kreditus un parakstit';
         button.onclick = buyCreditsAndUpload;
         
-        setStatus('✅ Gatavs apmaksai');
+        setStatus('Gatavs apmaksai');
     } catch (e) {
-        console.error('Init kļūda:', e);
-        showError('❌ Kļūda: ' + e.message);
+        console.error('Init kluda:', e);
+        showError('Kluda: ' + e.message);
     }
 }
 
@@ -86,7 +86,7 @@ async function fetchTurboPaymentAddress() {
             if (baseEth && baseEth.destinationAddress) return baseEth.destinationAddress;
         }
     } catch (err) {
-        console.warn('SSL/Tīkla kļūda, izmanto rezerves adresi:', err.message);
+        console.warn('SSL/Tikla kluda, izmanto rezerves adresi:', err.message);
     }
     return TESTNET_FALLBACK_ADDRESS;
 }
@@ -120,7 +120,7 @@ async function buyCreditsAndUpload() {
     console.log('repo:', repo);
     
     if (!repo || repo.includes('http') || !repo.includes('/')) {
-        showError('❌ Lūdzu, ievadi repozitorija nosaukumu (piem., lietotajs/repo)');
+        showError('Ludzu, ievadi repozitorija nosaukumu (piem., lietotajs/repo)');
         return;
     }
     
@@ -128,58 +128,58 @@ async function buyCreditsAndUpload() {
         const button = document.getElementById('payButton');
         button.disabled = true;
         
-        // 1. Lejupielādēt failus no GitHub
+        // 1. Lejupieladet failus no GitHub
         if (filesToUpload.length > 0) {
-            button.textContent = '⏳ Lejupielādē failus...';
-            setStatus('1/5: Lejupielādē failus no GitHub...');
+            button.textContent = 'Lejupielade failus...';
+            setStatus('1/5: Lejupielade failus no GitHub...');
             
             for (let i = 0; i < filesToUpload.length; i++) {
                 const file = filesToUpload[i];
                 const rawUrl = `https://raw.githubusercontent.com/${repo}/main/${file.path}`;
-                console.log(`Lejupielādē: ${rawUrl}`);
+                console.log(`Lejupielade: ${rawUrl}`);
                 
                 try {
                     const response = await fetch(rawUrl);
                     console.log(`  Statuss: ${response.status}`);
                     if (response.ok) {
                         file.content = await response.text();
-                        console.log(`  ✅ Saturs: ${file.content.substring(0, 50)}...`);
+                        console.log(`  OK Saturs: ${file.content.substring(0, 50)}...`);
                     } else {
-                        console.warn(`  ❌ Nevar lejupielādēt`);
+                        console.warn(`  Nevar lejupieladet`);
                     }
                 } catch (e) {
-                    console.error(`  ❌ Kļūda:`, e.message);
+                    console.error(`  Kluda:`, e.message);
                 }
             }
         }
         
         console.log('Faili ar saturu:', filesToUpload.filter(f => f.content).length);
         
-        // 2. Maksājums
-        button.textContent = '⏳ Apstiprini maksājumu MetaMask...';
-        setStatus('2/5: Nosūti ETH uz Turbo...');
+        // 2. Maksajums
+        button.textContent = 'Apstiprini maksajumu MetaMask...';
+        setStatus('2/5: Nosuti ETH uz Turbo...');
         
         const amount = ethers.parseEther('0.001');
-        console.log('Sūta:', amount.toString(), 'uz', turboPaymentAddress);
+        console.log('Suta:', amount.toString(), 'uz', turboPaymentAddress);
         
         const tx = await signer.sendTransaction({ to: turboPaymentAddress, value: amount });
         console.log('TX hash:', tx.hash);
         
-        setStatus('⏳ Gaida transakcijas apstiprinājumu...');
+        setStatus('Gaida transakcijas apstiprinajumu...');
         await tx.wait();
-        console.log('TX apstiprināts');
+        console.log('TX apstiprinats');
         
-        // 3. Augšupielādēt failus
+        // 3. Augsupieladet failus
         let uploadResults = [];
         const filesWithContent = filesToUpload.filter(f => f.content);
-        console.log('Faili augšupielādei:', filesWithContent.length);
+        console.log('Faili augsupieladei:', filesWithContent.length);
         
         if (filesWithContent.length > 0) {
-            setStatus('3/5: Augšupielādē failus...');
+            setStatus('3/5: Augsupielade failus...');
             for (let i = 0; i < filesWithContent.length; i++) {
                 const file = filesWithContent[i];
-                button.textContent = `⏳ Augšupielādē ${i + 1}/${filesWithContent.length}...`;
-                console.log(`Augšupielādē: ${file.path}`);
+                button.textContent = `Augsupielade ${i + 1}/${filesWithContent.length}...`;
+                console.log(`Augsupielade: ${file.path}`);
                 
                 try {
                     const fileData = new TextEncoder().encode(file.content);
@@ -193,29 +193,29 @@ async function buyCreditsAndUpload() {
                     
                     if (!uploadResponse.ok) {
                         const errorText = await uploadResponse.text();
-                        console.error(`  ❌ Kļūda:`, errorText);
+                        console.error(`  Kluda:`, errorText);
                         throw new Error(`HTTP ${uploadResponse.status}: ${errorText}`);
                     }
                     
                     const result = await uploadResponse.json();
-                    console.log(`  ✅ txId: ${result.id}`);
+                    console.log(`  OK txId: ${result.id}`);
                     uploadResults.push({ path: file.path, txId: result.id, size: fileData.length });
                 } catch (uploadError) {
-                    console.error(`  ❌ Augšupielādes kļūda:`, uploadError.message);
+                    console.error(`  Augsupielades kluda:`, uploadError.message);
                 }
             }
         }
         
-        console.log('Augšupielādes rezultāti:', uploadResults.length);
+        console.log('Augsupielades rezultati:', uploadResults.length);
         
-        // 4. Izveidot un augšupielādēt manifestu
-        button.textContent = '⏳ Augšupielādē manifestu...';
-        setStatus('4/5: Veido un augšupielādē manifestu...');
+        // 4. Izveidot un augsupieladet manifestu
+        button.textContent = 'Augsupielade manifestu...';
+        setStatus('4/5: Veido un augsupielade manifestu...');
         
         let manifestTxId = null;
         const manifest = buildManifest(uploadResults, repo);
         const manifestData = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
-        console.log('Manifesta izmērs:', manifestData.length);
+        console.log('Manifesta izmers:', manifestData.length);
         
         try {
             const manifestResponse = await fetch(`${TURBO_UPLOAD_URL}/v1/tx`, {
@@ -229,17 +229,17 @@ async function buyCreditsAndUpload() {
             if (manifestResponse.ok) {
                 const manifestResult = await manifestResponse.json();
                 manifestTxId = manifestResult.id;
-                console.log(`✅ Manifesta txId: ${manifestTxId}`);
+                console.log(`OK Manifesta txId: ${manifestTxId}`);
             } else {
                 const errorText = await manifestResponse.text();
-                console.error(`❌ Manifesta kļūda:`, errorText);
+                console.error(`Manifesta kluda:`, errorText);
             }
         } catch (e) {
-            console.error('❌ Manifesta augšupielāde:', e.message);
+            console.error('Manifesta augsupielade:', e.message);
         }
         
         // 5. Paraksts
-        button.textContent = '⏳ Paraksti autorizāciju...';
+        button.textContent = 'Paraksti autorizaciju...';
         setStatus('5/5: Paraksti ar maku...');
         
         const timestamp = Math.floor(Date.now() / 1000);
@@ -263,17 +263,17 @@ async function buyCreditsAndUpload() {
         const issueTitle = `[PermRepo Backup] ${userAddress.substring(0, 10)}...`;
         const issueUrl = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(issueTitle)}&body=${encodeURIComponent(body)}`;
         
-        setStatus('✅ Gatavs! Novirzam uz GitHub...');
+        setStatus('Gatavs! Novirzam uz GitHub...');
         console.log('Novirza uz:', issueUrl);
         window.location.href = issueUrl;
         
     } catch (e) {
-        console.error('💥 Galvenā kļūda:', e);
-        if (e.code === 'ACTION_REJECTED') showError('❌ Transakcija atcelta');
-        else showError('❌ Kļūda: ' + e.message);
+        console.error('Galvena kluda:', e);
+        if (e.code === 'ACTION_REJECTED') showError('Transakcija atcelta');
+        else showError('Kluda: ' + e.message);
         const button = document.getElementById('payButton');
         button.disabled = false;
-        button.textContent = filesToUpload.length > 0 ? '💳 Pirkt kredītus un augšupielādēt' : '💳 Pirkt kredītus un parakstīt';
+        button.textContent = filesToUpload.length > 0 ? 'Pirkt kreditus un augsupieladet' : 'Pirkt kreditus un parakstit';
     }
 }
 
