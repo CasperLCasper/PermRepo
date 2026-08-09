@@ -3,7 +3,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const CONFIG = require('../config');
 const { scanFiles, compareWithLock, saveLock, getRepoName } = require('../git/scanner');
-const { createManifest } = require('../manifest/create');
 const { createMerkleTree } = require('../merkle/tree');
 const { getExistingNFT } = require('../blockchain/nft');
 const { checkSubscription } = require('../blockchain/subscription');
@@ -62,7 +61,6 @@ async function backup(opts) {
         return;
     }
 
-    // Aprēķināt kopējo izmēru
     const totalChangedSize = Object.values(changed).reduce((s, f) => s + f.size, 0);
     console.log(`📊 Mainīti: ${Object.keys(changed).length} faili, ${(totalChangedSize / 1024).toFixed(1)} KB`);
 
@@ -70,12 +68,10 @@ async function backup(opts) {
     const issueBody = process.env.ISSUE_BODY;
     
     if (!issueBody) {
-        // Izveidot failu sarakstu priekš storage-pay.html
         const filesList = Object.entries(changed).map(([filePath, info]) => ({
             path: filePath,
             size: info.size
         }));
-        
         const filesParam = encodeURIComponent(JSON.stringify(filesList));
         const estimatedCost = Math.max(0.001, totalChangedSize / 1000000 * 0.001).toFixed(4);
         
@@ -88,19 +84,17 @@ async function backup(opts) {
     }
 
     let uploadedFiles = [];
+    let manifestTxId = null;
     
     try {
         const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
         if (!jsonMatch) {
             console.log('❌ Neizdevās atrast JSON datus.');
-            const filesList = Object.entries(changed).map(([fp, info]) => ({ path: fp, size: info.size }));
-            const filesParam = encodeURIComponent(JSON.stringify(filesList));
-            console.log(`💳 Apmaksāt glabāšanu: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}&files=${filesParam}`);
             return;
         }
         
         const payload = JSON.parse(jsonMatch[1]);
-        const { signature, message, timestamp, txHash, uploadedFiles: files } = payload;
+        const { signature, message, timestamp, txHash, uploadedFiles: files, manifestTxId: issueManifestTxId } = payload;
         
         if (Math.floor(Date.now() / 1000) - timestamp > CONFIG.SIGNATURE_TIMEOUT_SECONDS) {
             console.log('❌ Paraksts ir novecojis (>10 min).');
@@ -114,13 +108,13 @@ async function backup(opts) {
         }
         
         uploadedFiles = files || [];
+        manifestTxId = issueManifestTxId || null;
+        
         console.log('✅ Glabāšanas apmaksa verificēta');
-        if (txHash) {
-            console.log(`🔗 Transakcija: https://sepolia.basescan.org/tx/${txHash}`);
-        }
-        if (uploadedFiles.length > 0) {
-            console.log(`📤 No pārlūka augšupielādēti ${uploadedFiles.length} faili`);
-        }
+        if (txHash) console.log(`🔗 Transakcija: https://sepolia.basescan.org/tx/${txHash}`);
+        if (uploadedFiles.length > 0) console.log(`📤 Augšupielādēti ${uploadedFiles.length} faili`);
+        if (manifestTxId) console.log(`📋 Manifests: ar://${manifestTxId}`);
+        
     } catch (e) {
         console.log('❌ Kļūda verificējot parakstu:', e.message);
         return;
@@ -132,9 +126,7 @@ async function backup(opts) {
         allUploaded[f.path] = { hash: '', txId: f.txId, size: f.size };
     }
     for (const [fp, info] of Object.entries(changed)) {
-        if (!allUploaded[fp]) {
-            allUploaded[fp] = info;
-        }
+        if (!allUploaded[fp]) allUploaded[fp] = info;
     }
 
     // Merkle root
@@ -142,20 +134,32 @@ async function backup(opts) {
     const { root: merkleRoot } = createMerkleTree(allFiles);
     console.log(`🌳 Merkle root: ${merkleRoot}`);
 
-    // Manifests
-    const manifest = createManifest(unchanged, allUploaded, repoName);
-
-    // Lokālā kopija
-    const backupDir = path.join(repoPath, CONFIG.PERMAREPO_DIR, CONFIG.BACKUPS_DIR);
-    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-    fs.writeFileSync(path.join(backupDir, `manifest-${ts}.json`), JSON.stringify(manifest, null, 2));
+    // Lokālā manifesta kopija
+    if (manifestTxId) {
+        const manifest = {
+            manifest: 'arweave/paths',
+            version: '0.2.0',
+            index: { path: 'README.md' },
+            paths: {},
+            metadata: {
+                repo: repoName,
+                timestamp: new Date().toISOString(),
+                generatedBy: 'PermRepo v1.0.0'
+            }
+        };
+        for (const [fp, info] of Object.entries(allUploaded)) {
+            manifest.paths[fp] = { id: info.txId };
+        }
+        
+        const backupDir = path.join(repoPath, CONFIG.PERMAREPO_DIR, CONFIG.BACKUPS_DIR);
+        if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        fs.writeFileSync(path.join(backupDir, `manifest-${ts}.json`), JSON.stringify(manifest, null, 2));
+    }
 
     // Lock fails
     saveLock(repoPath, unchanged, allUploaded);
-    if (deleted.length > 0) {
-        console.log(`🗑️ Dzēstie faili izņemti no lock faila: ${deleted.join(', ')}`);
-    }
+    if (deleted.length > 0) console.log(`🗑️ Dzēstie faili: ${deleted.join(', ')}`);
 
     const totalSize = Object.values(allUploaded).reduce((s, f) => s + f.size, 0);
     
@@ -164,10 +168,12 @@ async function backup(opts) {
     console.log(`📊 Faili:     ${Object.keys(allUploaded).length}`);
     console.log(`📦 Izmērs:    ${(totalSize / 1024).toFixed(1)} KB`);
     console.log(`🌳 Merkle:    ${merkleRoot}`);
+    if (manifestTxId) console.log(`📋 Manifests: ar://${manifestTxId}`);
     console.log('=======================================================');
 
     return {
         status: 'success',
+        manifestTxId,
         merkleRoot,
         filesChanged: Object.keys(allUploaded).length,
         totalSize,
@@ -178,13 +184,7 @@ async function backup(opts) {
 function loadLock(repoPath) {
     const lockPath = path.join(repoPath, CONFIG.LOCK_FILE_NAME);
     if (!fs.existsSync(lockPath)) return { files: {} };
-    try {
-        const data = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
-        return { files: data.files || {} };
-    } catch {
-        console.warn('⚠️ Bojāts lock fails — sākam no jauna');
-        return { files: {} };
-    }
+    try { return { files: JSON.parse(fs.readFileSync(lockPath, 'utf-8')).files || {} }; } catch { return { files: {} }; }
 }
 
 module.exports = { backup };
