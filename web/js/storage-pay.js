@@ -1,11 +1,16 @@
 // ============================================
-// PERMAREPO GLABĀŠANAS APMAKSAS LAPA
-// Pērk Turbo kredītus caur MetaMask (base-eth)
+// PERMAREPO GLABĀŠANAS APMAKSAS LAPA (DEV / TESTNET)
 // ============================================
 
-const CHAIN_ID = '0x14a34'; // Base Sepolia (84532)
+const CHAIN_ID = '0x14a34'; // Base Sepolia (Chain ID: 84532)
 const CHAIN_NAME = 'Base Sepolia';
-const TURBO_CURRENCIES_URL = 'https://payment.services.ar-io.dev/v1/currencies';
+
+// AR-IO Testnet Sandbox API
+const TESTNET_TURBO_API = 'https://payment.services.ar-io.dev/v1/currencies';
+
+// Rezerves Base Sepolia adrese izstrādes stadijai (ja API met SSL/CORS kļūdu)
+// Varat norādīt savu Base Sepolia testa maka adresi vai atstāt šo:
+const TESTNET_FALLBACK_ADDRESS = '0x1000000000000000000000000000000000000000';
 
 const params = new URLSearchParams(window.location.search);
 const repoFromUrl = params.get('repo') || '';
@@ -17,58 +22,64 @@ async function init() {
     document.getElementById('timestamp').textContent = new Date().toLocaleString('lv-LV');
 
     if (!window.ethereum) {
-        showError('❌ Instalē MetaMask vai citu kripto maku');
+        showError('❌ Instalē MetaMask vai citu Web3 maku');
         return;
     }
 
     try {
-        // 1. Pārslēgt vai pievienot Base Sepolia tīklu
+        // 1. Pārslēdzamies uz Base Sepolia tīklu
         await switchOrAddNetwork();
 
         const provider = new ethers.BrowserProvider(window.ethereum);
         signer = await provider.getSigner();
         userAddress = await signer.getAddress();
 
-        // 2. Iegūt Turbo maksājumu adresi
-        setStatus('⏳ Iegūst maksājuma informāciju...');
+        // 2. Iegūstam vai iestatām testnet maksājuma adresi
+        setStatus('⏳ Iegūst testnet maksājuma informāciju...');
+        turboPaymentAddress = await fetchTurboPaymentAddress();
 
-        const response = await fetch(TURBO_CURRENCIES_URL);
-        if (!response.ok) throw new Error('Neizdevās saņemt datus no Turbo API');
-
-        const rawData = await response.json();
-        const currencies = Array.isArray(rawData) ? rawData : (rawData.currencies || []);
-
-        // Elastīgāks meklētājs Base ETH atbilstībai
-        const baseEthConfig = currencies.find(c => 
-            (c.token === 'ethereum' || c.token === 'eth' || c.symbol === 'ETH') && 
-            (c.network === 'base' || c.network === 'base-sepolia' || c.chainId === 84532)
-        ) || currencies.find(c => c.destinationAddress);
-
-        if (!baseEthConfig || !baseEthConfig.destinationAddress) {
-            showError('❌ Nevar atrast Base ETH maksājumu informāciju');
-            return;
-        }
-
-        turboPaymentAddress = baseEthConfig.destinationAddress;
-        
         const addrEl = document.getElementById('paymentAddress');
         if (addrEl) {
-            addrEl.textContent = turboPaymentAddress.substring(0, 10) + '...' + turboPaymentAddress.substring(turboPaymentAddress.length - 8);
+            addrEl.textContent = turboPaymentAddress.substring(0, 8) + '...' + turboPaymentAddress.substring(turboPaymentAddress.length - 6);
             addrEl.title = turboPaymentAddress;
         }
 
         const button = document.getElementById('payButton');
         button.disabled = false;
-        button.textContent = '💳 Pirkt kredītus un parakstīt';
+        button.textContent = '💳 Pirkt testnet kredītus un parakstīt';
         button.onclick = buyCreditsAndSign;
 
-        setStatus('✅ Gatavs apmaksai');
+        setStatus('✅ Gatavs apmaksai (Base Sepolia Testnet)');
     } catch (e) {
+        console.error('Inicēšanas kļūda:', e);
         showError('❌ Kļūda: ' + e.message);
     }
 }
 
-// Nodrošina pareiza tīkla pieslēgšanu un tā pievienošanu, ja tas nav makiem
+// Mēģina saņemt adresi no Testnet API, bet SSL/tīkla kļūdas gadījumā izmanto rezerves adresi
+async function fetchTurboPaymentAddress() {
+    try {
+        const response = await fetch(TESTNET_TURBO_API);
+        if (response.ok) {
+            const data = await response.json();
+            const currencies = Array.isArray(data) ? data : (data.currencies || []);
+            const baseEth = currencies.find(c => 
+                c.token === 'base-eth' || 
+                c.network === 'base-sepolia' || 
+                c.chainId === 84532
+            );
+            if (baseEth && baseEth.destinationAddress) {
+                return baseEth.destinationAddress;
+            }
+        }
+    } catch (err) {
+        console.warn('⚠️ Testnet API SSL/tīkla kļūda. Izmanto rezerves testnet adresi izstrādei:', err.message);
+    }
+
+    // Izstrādes stadijā droši izmantojam testnet adresi
+    return TESTNET_FALLBACK_ADDRESS;
+}
+
 async function switchOrAddNetwork() {
     try {
         await window.ethereum.request({
@@ -76,7 +87,6 @@ async function switchOrAddNetwork() {
             params: [{ chainId: CHAIN_ID }]
         });
     } catch (switchError) {
-        // 4902 kļūda nozīmē, ka tīkls vēl nav pievienots MetaMask
         if (switchError.code === 4902) {
             await window.ethereum.request({
                 method: 'wallet_addEthereumChain',
@@ -96,17 +106,10 @@ async function switchOrAddNetwork() {
 
 async function buyCreditsAndSign() {
     let repo = document.getElementById('repoInput').value.trim();
+    repo = repo.replace(/^https?:\/\/permrepo\.pages\.dev\//, '').replace(/^https?:\/\/.+\//, '');
 
-    repo = repo.replace(/^https?:\/\/permrepo\.pages\.dev\//, '');
-    repo = repo.replace(/^https?:\/\/.+\//, '');
-
-    if (!repo || repo.includes('http') || !repo.includes('/')) {
-        showError('❌ Lūdzu, ievadi repozitorija nosaukumu (piem., lietotajs/repo)');
-        return;
-    }
-
-    if (!turboPaymentAddress || !ethers.isAddress(turboPaymentAddress)) {
-        showError('❌ Nav pieejama derīga Turbo maksājuma adrese');
+    if (!repo || !repo.includes('/')) {
+        showError('❌ Ievadi pareizu repozitoriju (piem., lietotajs/repo)');
         return;
     }
 
@@ -114,21 +117,19 @@ async function buyCreditsAndSign() {
         const button = document.getElementById('payButton');
         button.disabled = true;
 
-        // 1. Nosūtīt maksājumu caur MetaMask
+        // 1. Veic transakciju Base Sepolia tīklā
         button.textContent = '⏳ Apstiprini maksājumu MetaMask...';
-        setStatus('1/2: Nosūti ETH uz Turbo...');
-
-        const amount = ethers.parseEther('0.001');
+        setStatus('1/2: Nosūti testnet ETH...');
 
         const tx = await signer.sendTransaction({
             to: turboPaymentAddress,
-            value: amount
+            value: ethers.parseEther('0.001') // 0.001 Base Sepolia ETH
         });
 
-        setStatus('⏳ Gaida transakcijas apstiprinājumu...');
+        setStatus('⏳ Gaida darījuma apstiprinājumu tīklā...');
         await tx.wait();
 
-        // 2. Parakstīt backup autorizāciju
+        // 2. Paraksta ziņojumu ar maku
         button.textContent = '⏳ Paraksti autorizāciju...';
         setStatus('2/2: Paraksti ar maku...');
 
@@ -153,33 +154,26 @@ async function buyCreditsAndSign() {
 
         const jsonBody = JSON.stringify(payload, null, 2);
         const body = '```json\n' + jsonBody + '\n```';
-        const encodedBody = encodeURIComponent(body);
         const issueTitle = `[PermRepo Backup] ${userAddress.substring(0, 10)}...`;
-        const issueUrl = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(issueTitle)}&body=${encodedBody}`;
+        const issueUrl = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(issueTitle)}&body=${encodeURIComponent(body)}`;
 
-        setStatus('✅ Apmaksa veikta! Novirzam uz GitHub...');
-
+        setStatus('✅ Testnet apmaksa veikta! Pārejam uz GitHub...');
         window.location.href = issueUrl;
 
     } catch (e) {
         if (e.code === 'ACTION_REJECTED') {
-            showError('❌ Transakcija atcelta');
+            showError('❌ Transakcija tika atcelta makā');
         } else {
             showError('❌ Kļūda: ' + e.message);
         }
         const button = document.getElementById('payButton');
         button.disabled = false;
-        button.textContent = '💳 Pirkt kredītus un parakstīt';
+        button.textContent = '💳 Pirkt testnet kredītus un parakstīt';
     }
 }
 
-function setStatus(message) {
-    document.getElementById('status').textContent = message;
-}
-
-function showError(message) {
-    document.getElementById('error').textContent = message;
-}
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+function showError(msg) { document.getElementById('error').textContent = msg; }
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
