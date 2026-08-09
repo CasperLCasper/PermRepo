@@ -1,45 +1,109 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PermRepo — Autorizēt Backupu</title>
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'sha384-gpR0Q6Hx/O+uevlbpbANbS0LWjbejPV1sqD/8w422l/fW8whGY0EPmKw3uG7ACYP'; style-src 'self'; connect-src https://sepolia.base.org https://mainnet.base.org https://raw.githubusercontent.com; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none';">
-    <meta http-equiv="X-Content-Type-Options" content="nosniff">
-    <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
-    <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()">
-    <link rel="stylesheet" href="css/style.css">
-</head>
-<body>
-<div class="container text-center">
-    <h1>✍️ Autorizēt Backupu</h1>
-    <p class="subtitle">Paraksti ar savu maku, lai autorizētu failu glabāšanu Arweave</p>
+// ============================================
+// PERMAREPO GLABASANAS APMAKSAS LAPA
+// Tikai paraksts autorizacijai
+// ============================================
+
+const CHAIN_ID = '0x14a34';
+
+const params = new URLSearchParams(window.location.search);
+const repoFromUrl = params.get('repo') || '';
+const filesParam = params.get('files') || '';
+
+let signer, userAddress;
+let filesToUpload = [];
+
+async function init() {
+    document.getElementById('repoInput').value = repoFromUrl;
+    document.getElementById('timestamp').textContent = new Date().toLocaleString();
     
-    <div class="info-row text-left">
-        <span class="info-label">Repo</span>
-        <input type="text" id="repoInput" placeholder="piem., lietotajs/repo" value="">
-    </div>
+    if (filesParam) {
+        try {
+            filesToUpload = JSON.parse(decodeURIComponent(filesParam));
+            document.getElementById('fileCount').textContent = filesToUpload.length + ' faili';
+            const totalSize = filesToUpload.reduce((s, f) => s + f.size, 0);
+            document.getElementById('totalSize').textContent = `${(totalSize / 1024).toFixed(1)} KB`;
+        } catch (e) {
+            filesToUpload = [];
+        }
+    }
     
-    <div class="info-row text-left">
-        <span class="info-label">Laika zīmogs</span>
-        <span class="info-value" id="timestamp">-</span>
-    </div>
+    if (!window.ethereum) {
+        showError('Instale MetaMask vai citu kripto maku');
+        return;
+    }
     
-    <div class="info-row text-left">
-        <span class="info-label">Faili</span>
-        <span class="info-value" id="fileCount">Nav norādīti</span>
-    </div>
+    try {
+        await ethereum.request({ 
+            method: 'wallet_switchEthereumChain', 
+            params: [{ chainId: CHAIN_ID }] 
+        });
+        
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        signer = await provider.getSigner();
+        userAddress = await signer.getAddress();
+        
+        const button = document.getElementById('payButton');
+        button.disabled = false;
+        button.textContent = 'Parakstit un autorizet backupu';
+        button.onclick = signAndRedirect;
+        
+        setStatus('Gatavs parakstisanai');
+    } catch (e) {
+        showError('Kluda: ' + e.message);
+    }
+}
+
+async function signAndRedirect() {
+    let repo = document.getElementById('repoInput').value.trim();
+    repo = repo.replace(/^https?:\/\/permrepo\.pages\.dev\//, '');
+    repo = repo.replace(/^https?:\/\/.+\//, '');
     
-    <div class="info-row text-left">
-        <span class="info-label">Kopējais izmērs</span>
-        <span class="info-value" id="totalSize">Aprēķina...</span>
-    </div>
+    if (!repo || repo.includes('http') || !repo.includes('/')) {
+        showError('Ludzu, ievadi repozitorija nosaukumu (piem., lietotajs/repo)');
+        return;
+    }
     
-    <button id="payButton" class="sign-button" disabled>⏳ Gaida savienojumu...</button>
-    <div class="status" id="status"></div>
-    <div class="error" id="error"></div>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js" integrity="sha384-gpR0Q6Hx/O+uevlbpbANbS0LWjbejPV1sqD/8w422l/fW8whGY0EPmKw3uG7ACYP" crossorigin="anonymous"></script>
-<script src="js/storage-pay.js"></script>
-</body>
-</html>
+    try {
+        const button = document.getElementById('payButton');
+        button.disabled = true;
+        button.textContent = 'Paraksti ar maku...';
+        setStatus('Paraksti ar MetaMask...');
+        
+        const timestamp = Math.floor(Date.now() / 1000);
+        const message = [
+            'PermRepo Backup Authorization',
+            `Repository: ${repo}`,
+            `Timestamp: ${timestamp}`,
+            `Address: ${userAddress}`,
+            `Files: ${filesToUpload.length}`
+        ].join('\n');
+        
+        const signature = await signer.signMessage(message);
+        
+        const payload = {
+            address: userAddress,
+            signature: signature,
+            message: message,
+            timestamp: timestamp
+        };
+        
+        const jsonBody = JSON.stringify(payload, null, 2);
+        const body = '```json\n' + jsonBody + '\n```';
+        const issueTitle = `[PermRepo Backup] ${userAddress.substring(0, 10)}...`;
+        const issueUrl = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(issueTitle)}&body=${encodeURIComponent(body)}`;
+        
+        setStatus('Paraksts veiksmigs! Novirzam uz GitHub...');
+        window.location.href = issueUrl;
+        
+    } catch (e) {
+        if (e.code === 'ACTION_REJECTED') showError('Parakstisana atcelta');
+        else showError('Kluda: ' + e.message);
+        const button = document.getElementById('payButton');
+        button.disabled = false;
+        button.textContent = 'Parakstit un autorizet backupu';
+    }
+}
+
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+function showError(msg) { document.getElementById('error').textContent = msg; }
+init();
