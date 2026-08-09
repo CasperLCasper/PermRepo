@@ -72,32 +72,34 @@ async function backup(opts) {
     console.log('✅ Abonements aktīvs');
 
     // ==========================================
-    // 4. GLABĀŠANAS PARAKSTA VERIFIKĀCIJA
+    // 4. GLABĀŠANAS APMAKSAS VERIFIKĀCIJA
     // ==========================================
     const issueBody = process.env.ISSUE_BODY;
     
     if (!issueBody) {
-        console.log('✍️ Nepieciešams paraksts glabāšanas apmaksai.');
-        console.log(`🔗 Apmaksāt glabāšanu: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}`);
-        console.log('⚠️ Pēc parakstīšanas, izveido jaunu Issue.');
+        console.log('💳 Nepieciešams iegādāties glabāšanas kredītus.');
+        console.log(`🔗 Pirkt kredītus: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}`);
+        console.log('⚠️ Pēc kredītu iegādes, izveido jaunu Issue.');
         return;
     }
 
+    let txHash = null;
+    
     try {
         const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
         if (!jsonMatch) {
             console.log('❌ Neizdevās atrast JSON datus Issue aprakstā.');
-            console.log(`✍️ Nepieciešams paraksts glabāšanas apmaksai.`);
-            console.log(`🔗 Apmaksāt glabāšanu: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}`);
+            console.log(`💳 Nepieciešams iegādāties glabāšanas kredītus.`);
+            console.log(`🔗 Pirkt kredītus: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}`);
             return;
         }
         
         const payload = JSON.parse(jsonMatch[1]);
-        const { signature, message, timestamp } = payload;
+        const { signature, message, timestamp, txHash: issueTxHash } = payload;
         
         if (Math.floor(Date.now() / 1000) - timestamp > CONFIG.SIGNATURE_TIMEOUT_SECONDS) {
             console.log('❌ Paraksts ir novecojis (>10 min).');
-            console.log(`🔗 Apmaksāt glabāšanu no jauna: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}`);
+            console.log(`🔗 Pirkt kredītus no jauna: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}`);
             return;
         }
         
@@ -106,7 +108,12 @@ async function backup(opts) {
             console.log('❌ Paraksts neatbilst maka adresei.');
             return;
         }
+        
+        txHash = issueTxHash;
         console.log('✅ Glabāšanas apmaksa verificēta');
+        if (txHash) {
+            console.log(`🔗 Transakcija: https://sepolia.basescan.org/tx/${txHash}`);
+        }
     } catch (e) {
         console.log('❌ Kļūda verificējot parakstu:', e.message);
         return;
@@ -143,61 +150,68 @@ async function backup(opts) {
     // ==========================================
     console.log('📤 Augšupielādē failus uz Arweave...');
     const uploader = new TurboUploader();
-    const results = await uploader.uploadChangedFiles(repoPath, changed, repoName);
-    console.log(`✅ Augšupielādēti ${Object.keys(results).length} faili`);
-
-    // ==========================================
-    // 8. MANIFESTS
-    // ==========================================
-    const manifest = createManifest(unchanged, results, repoName);
-    const manifestTxId = await uploader.uploadManifest(manifest, repoName);
-    const manifestURI = `ar://${manifestTxId}`;
-    console.log(`📋 Manifests: ${manifestURI}`);
-
-    // ==========================================
-    // 9. LOKĀLĀ KOPIJA
-    // ==========================================
-    const permRepoDir = path.join(repoPath, CONFIG.PERMAREPO_DIR);
-    const backupDir = path.join(permRepoDir, CONFIG.BACKUPS_DIR);
     
-    if (!fs.existsSync(backupDir)) {
-        fs.mkdirSync(backupDir, { recursive: true });
+    try {
+        const results = await uploader.uploadChangedFiles(repoPath, changed, repoName);
+        console.log(`✅ Augšupielādēti ${Object.keys(results).length} faili`);
+
+        // ==========================================
+        // 8. MANIFESTS
+        // ==========================================
+        const manifest = createManifest(unchanged, results, repoName);
+        const manifestTxId = await uploader.uploadManifest(manifest, repoName);
+        const manifestURI = `ar://${manifestTxId}`;
+        console.log(`📋 Manifests: ${manifestURI}`);
+
+        // ==========================================
+        // 9. LOKĀLĀ KOPIJA
+        // ==========================================
+        const permRepoDir = path.join(repoPath, CONFIG.PERMAREPO_DIR);
+        const backupDir = path.join(permRepoDir, CONFIG.BACKUPS_DIR);
+        
+        if (!fs.existsSync(backupDir)) {
+            fs.mkdirSync(backupDir, { recursive: true });
+        }
+        
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        const localPath = path.join(backupDir, `manifest-${ts}.json`);
+        fs.writeFileSync(localPath, JSON.stringify(manifest, null, 2));
+        console.log(`💾 Lokālā kopija: ${localPath}`);
+
+        // ==========================================
+        // 10. LOCK FAILS
+        // ==========================================
+        saveLock(repoPath, unchanged, results);
+        if (deleted.length > 0) {
+            console.log(`🗑️ Dzēstie faili izņemti no lock faila: ${deleted.join(', ')}`);
+        }
+
+        // ==========================================
+        // 11. REZULTĀTS
+        // ==========================================
+        const totalSize = Object.values(results).reduce((s, f) => s + f.size, 0);
+        
+        console.log('=======================================================');
+        console.log('✅ BACKUPS VEIKSMĪGS!');
+        console.log(`🔗 Manifests: ${manifestURI}`);
+        console.log(`📊 Faili:     ${Object.keys(results).length} mainīti, ${Object.keys(unchanged).length} nemainīti`);
+        console.log(`📦 Izmērs:    ${(totalSize / 1024).toFixed(1)} KB`);
+        console.log(`🌳 Merkle:    ${merkleRoot}`);
+        console.log('=======================================================');
+
+        return {
+            status: 'success',
+            manifestTxId,
+            merkleRoot,
+            filesChanged: Object.keys(results).length,
+            totalSize,
+            tokenId: tokenId.toString()
+        };
+    } catch (uploadError) {
+        console.log('❌ Augšupielāde neizdevās:', uploadError.message);
+        console.log(`💳 Iespējams, nepietiek kredītu. Pirkt vēlreiz: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}`);
+        return;
     }
-    
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const localPath = path.join(backupDir, `manifest-${timestamp}.json`);
-    fs.writeFileSync(localPath, JSON.stringify(manifest, null, 2));
-    console.log(`💾 Lokālā kopija: ${localPath}`);
-
-    // ==========================================
-    // 10. LOCK FAILS
-    // ==========================================
-    saveLock(repoPath, unchanged, results);
-    if (deleted.length > 0) {
-        console.log(`🗑️ Dzēstie faili izņemti no lock faila: ${deleted.join(', ')}`);
-    }
-
-    // ==========================================
-    // 11. REZULTĀTS
-    // ==========================================
-    const totalSize = Object.values(results).reduce((s, f) => s + f.size, 0);
-    
-    console.log('=======================================================');
-    console.log('✅ BACKUPS VEIKSMĪGS!');
-    console.log(`🔗 Manifests: ${manifestURI}`);
-    console.log(`📊 Faili:     ${Object.keys(results).length} mainīti, ${Object.keys(unchanged).length} nemainīti`);
-    console.log(`📦 Izmērs:    ${(totalSize / 1024).toFixed(1)} KB`);
-    console.log(`🌳 Merkle:    ${merkleRoot}`);
-    console.log('=======================================================');
-
-    return {
-        status: 'success',
-        manifestTxId,
-        merkleRoot,
-        filesChanged: Object.keys(results).length,
-        totalSize,
-        tokenId: tokenId.toString()
-    };
 }
 
 function loadLock(repoPath) {
