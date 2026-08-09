@@ -5,12 +5,12 @@
 
 const CHAIN_ID = '0x14a34';
 const CHAIN_NAME = 'Base Sepolia';
-const TURBO_PAYMENT_ADDRESS = '0x29f1ed42C6C2E157B7571f9585a9C9Dd6fBcda51';
+const TURBO_CURRENCIES_URL = 'https://payment.services.ar-io.dev/v1/currencies';
 
 const params = new URLSearchParams(window.location.search);
 const repoFromUrl = params.get('repo') || '';
 
-let signer, userAddress;
+let signer, userAddress, turboPaymentAddress;
 
 async function init() {
     document.getElementById('repoInput').value = repoFromUrl;
@@ -30,6 +30,22 @@ async function init() {
         const provider = new ethers.BrowserProvider(window.ethereum);
         signer = await provider.getSigner();
         userAddress = await signer.getAddress();
+        
+        // Iegūt Turbo maksājumu adresi
+        setStatus('⏳ Iegūst maksājuma informāciju...');
+        
+        const response = await fetch(TURBO_CURRENCIES_URL);
+        const currencies = await response.json();
+        const baseEthConfig = currencies.find(c => c.token === 'ethereum' && c.network === 'base');
+        
+        if (!baseEthConfig) {
+            showError('❌ Nevar atrast Base ETH maksājumu informāciju');
+            return;
+        }
+        
+        turboPaymentAddress = baseEthConfig.destinationAddress;
+        document.getElementById('paymentAddress').textContent = 
+            turboPaymentAddress.substring(0, 10) + '...' + turboPaymentAddress.substring(turboPaymentAddress.length - 8);
         
         const button = document.getElementById('payButton');
         button.disabled = false;
@@ -59,12 +75,12 @@ async function buyCreditsAndSign() {
         
         // 1. Nosūtīt maksājumu caur MetaMask
         button.textContent = '⏳ Apstiprini maksājumu MetaMask...';
-        setStatus('1/2: Nosūti maksājumu...');
+        setStatus('1/2: Nosūti ETH uz Turbo...');
         
         const amount = ethers.parseEther('0.001');
         
         const tx = await signer.sendTransaction({
-            to: TURBO_PAYMENT_ADDRESS,
+            to: turboPaymentAddress,
             value: amount
         });
         
