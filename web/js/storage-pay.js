@@ -1,18 +1,17 @@
 // ============================================
 // PERMAREPO GLABASANAS APMAKSAS LAPA
-// Lejupielade failus, perk kreditus, augsupielade, veido manifestu
+// Augsupielade Arweave, izmantojot esosu kreditu atlikumu
 // ============================================
 
 const CHAIN_ID = '0x14a34';
 const TURBO_UPLOAD_URL = 'https://upload.services.ar-io.dev';
-const TURBO_API_BASE = 'https://payment.ardrive.io/v1';
-const TESTNET_FALLBACK_ADDRESS = '0x1000000000000000000000000000000000000000';
+const TURBO_PAYMENT_URL = 'https://payment.services.ar-io.dev';
 
 const params = new URLSearchParams(window.location.search);
 const repoFromUrl = params.get('repo') || '';
 const filesParam = params.get('files') || '';
 
-let signer, userAddress, turboPaymentAddress;
+let signer, userAddress;
 let filesToUpload = [];
 
 async function init() {
@@ -50,45 +49,19 @@ async function init() {
         userAddress = await signer.getAddress();
         console.log('userAddress:', userAddress);
         
-        setStatus('Iegust maksajuma informaciju...');
-        turboPaymentAddress = await fetchTurboPaymentAddress();
-        console.log('turboPaymentAddress:', turboPaymentAddress);
-        
-        document.getElementById('paymentAddress').textContent = 
-            turboPaymentAddress.substring(0, 10) + '...' + turboPaymentAddress.substring(turboPaymentAddress.length - 8);
-        
         const totalSize = filesToUpload.reduce((s, f) => s + f.size, 0);
-        const estimatedCost = Math.max(0.001, totalSize / 1000000 * 0.001).toFixed(4);
-        document.getElementById('estimatedCost').textContent = `~${estimatedCost} ETH`;
-        document.getElementById('totalCost').textContent = `~${estimatedCost} ETH (Base Sepolia)`;
+        document.getElementById('totalSize').textContent = `${(totalSize / 1024).toFixed(1)} KB`;
         
         const button = document.getElementById('payButton');
         button.disabled = false;
-        button.textContent = filesToUpload.length > 0 ? 'Pirkt kreditus un augsupieladet' : 'Pirkt kreditus un parakstit';
-        button.onclick = buyCreditsAndUpload;
+        button.textContent = 'Augsupieladet un autorizet backupu';
+        button.onclick = uploadAndSign;
         
-        setStatus('Gatavs apmaksai');
+        setStatus('Gatavs augsupieladei');
     } catch (e) {
         console.error('Init kluda:', e);
         showError('Kluda: ' + e.message);
     }
-}
-
-async function fetchTurboPaymentAddress() {
-    try {
-        const response = await fetch(`${TURBO_API_BASE}/currencies`);
-        if (response.ok) {
-            const data = await response.json();
-            const currencies = Array.isArray(data) ? data : (data.currencies || []);
-            const baseEth = currencies.find(c => 
-                c.token === 'base-eth' || c.network === 'base-sepolia' || c.chainId === 84532
-            );
-            if (baseEth && baseEth.destinationAddress) return baseEth.destinationAddress;
-        }
-    } catch (err) {
-        console.warn('SSL/Tikla kluda, izmanto rezerves adresi:', err.message);
-    }
-    return TESTNET_FALLBACK_ADDRESS;
 }
 
 function buildManifest(uploadedFiles, repoName) {
@@ -111,8 +84,8 @@ function buildManifest(uploadedFiles, repoName) {
     return manifest;
 }
 
-async function buyCreditsAndUpload() {
-    console.log('=== buyCreditsAndUpload ===');
+async function uploadAndSign() {
+    console.log('=== uploadAndSign ===');
     
     let repo = document.getElementById('repoInput').value.trim();
     repo = repo.replace(/^https?:\/\/permrepo\.pages\.dev\//, '');
@@ -131,7 +104,7 @@ async function buyCreditsAndUpload() {
         // 1. Lejupieladet failus no GitHub
         if (filesToUpload.length > 0) {
             button.textContent = 'Lejupielade failus...';
-            setStatus('1/5: Lejupielade failus no GitHub...');
+            setStatus('1/4: Lejupielade failus no GitHub...');
             
             for (let i = 0; i < filesToUpload.length; i++) {
                 const file = filesToUpload[i];
@@ -153,56 +126,60 @@ async function buyCreditsAndUpload() {
             }
         }
         
-        console.log('Faili ar saturu:', filesToUpload.filter(f => f.content).length);
+        const filesWithContent = filesToUpload.filter(f => f.content);
+        console.log('Faili ar saturu:', filesWithContent.length);
         
-        // 2. Maksajums
-        button.textContent = 'Apstiprini maksajumu MetaMask...';
-        setStatus('2/5: Nosuti ETH uz Turbo...');
+        if (filesWithContent.length === 0) {
+            showError('Nav failu augsupieladei. Parbaudi GitHub Raw piekluvi.');
+            button.disabled = false;
+            return;
+        }
         
-        const amount = ethers.parseEther('0.001');
-        console.log('Suta:', amount.toString(), 'uz', turboPaymentAddress);
+        // 2. Inicializet Turbo ar lietotaja maku
+        const { TurboFactory, EthereumSigner } = await import('https://cdn.jsdelivr.net/npm/@ardrive/turbo-sdk@1.8.0/+esm');
         
-        const tx = await signer.sendTransaction({ to: turboPaymentAddress, value: amount });
-        console.log('TX hash:', tx.hash);
+        button.textContent = 'Savieno ar Turbo...';
+        setStatus('2/4: Savieno ar Turbo...');
         
-        setStatus('Gaida transakcijas apstiprinajumu...');
-        await tx.wait();
-        console.log('TX apstiprinats');
+        // Izmantojam lietotaja MetaMask signer
+        const turbo = TurboFactory.authenticated({
+            signer: new EthereumSigner(window.ethereum),
+            token: 'base-eth',
+            uploadServiceConfig: { url: TURBO_UPLOAD_URL },
+            paymentServiceConfig: { url: TURBO_PAYMENT_URL }
+        });
         
         // 3. Augsupieladet failus
         let uploadResults = [];
-        const filesWithContent = filesToUpload.filter(f => f.content);
-        console.log('Faili augsupieladei:', filesWithContent.length);
+        setStatus('3/4: Augsupielade failus...');
         
-        if (filesWithContent.length > 0) {
-            setStatus('3/5: Augsupielade failus...');
-            for (let i = 0; i < filesWithContent.length; i++) {
-                const file = filesWithContent[i];
-                button.textContent = `Augsupielade ${i + 1}/${filesWithContent.length}...`;
-                console.log(`Augsupielade: ${file.path}`);
+        for (let i = 0; i < filesWithContent.length; i++) {
+            const file = filesWithContent[i];
+            button.textContent = `Augsupielade ${i + 1}/${filesWithContent.length}...`;
+            console.log(`Augsupielade: ${file.path}`);
+            
+            try {
+                const fileData = new TextEncoder().encode(file.content);
                 
-                try {
-                    const fileData = new TextEncoder().encode(file.content);
-                    const uploadResponse = await fetch(`${TURBO_UPLOAD_URL}/v1/tx`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/octet-stream' },
-                        body: fileData,
-                        signal: AbortSignal.timeout(120000)
-                    });
-                    console.log(`  Statuss: ${uploadResponse.status}`);
-                    
-                    if (!uploadResponse.ok) {
-                        const errorText = await uploadResponse.text();
-                        console.error(`  Kluda:`, errorText);
-                        throw new Error(`HTTP ${uploadResponse.status}: ${errorText}`);
+                const result = await turbo.upload({
+                    data: fileData,
+                    dataItemOpts: {
+                        tags: [
+                            { name: 'App-Name', value: 'PermRepo' },
+                            { name: 'Repo', value: repo },
+                            { name: 'File-Path', value: file.path },
+                            { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                        ]
                     }
-                    
-                    const result = await uploadResponse.json();
-                    console.log(`  OK txId: ${result.id}`);
-                    uploadResults.push({ path: file.path, txId: result.id, size: fileData.length });
-                } catch (uploadError) {
-                    console.error(`  Augsupielades kluda:`, uploadError.message);
-                }
+                });
+                
+                console.log(`  OK txId: ${result.id}`);
+                uploadResults.push({ path: file.path, txId: result.id, size: fileData.length });
+            } catch (uploadError) {
+                console.error(`  Augsupielades kluda:`, uploadError.message);
+                showError(`Augsupielades kluda: ${uploadError.message}. Parbaudi kreditu atlikumu.`);
+                button.disabled = false;
+                return;
             }
         }
         
@@ -210,7 +187,7 @@ async function buyCreditsAndUpload() {
         
         // 4. Izveidot un augsupieladet manifestu
         button.textContent = 'Augsupielade manifestu...';
-        setStatus('4/5: Veido un augsupielade manifestu...');
+        setStatus('4/4: Veido un augsupielade manifestu...');
         
         let manifestTxId = null;
         const manifest = buildManifest(uploadResults, repo);
@@ -218,42 +195,43 @@ async function buyCreditsAndUpload() {
         console.log('Manifesta izmers:', manifestData.length);
         
         try {
-            const manifestResponse = await fetch(`${TURBO_UPLOAD_URL}/v1/tx`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/octet-stream' },
-                body: manifestData,
-                signal: AbortSignal.timeout(60000)
+            const manifestResult = await turbo.upload({
+                data: manifestData,
+                dataItemOpts: {
+                    tags: [
+                        { name: 'App-Name', value: 'PermRepo' },
+                        { name: 'Type', value: 'path-manifest' },
+                        { name: 'Repo', value: repo },
+                        { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
+                        { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                    ]
+                }
             });
-            console.log(`Manifesta statuss: ${manifestResponse.status}`);
             
-            if (manifestResponse.ok) {
-                const manifestResult = await manifestResponse.json();
-                manifestTxId = manifestResult.id;
-                console.log(`OK Manifesta txId: ${manifestTxId}`);
-            } else {
-                const errorText = await manifestResponse.text();
-                console.error(`Manifesta kluda:`, errorText);
-            }
+            manifestTxId = manifestResult.id;
+            console.log('OK Manifesta txId:', manifestTxId);
         } catch (e) {
             console.error('Manifesta augsupielade:', e.message);
         }
         
         // 5. Paraksts
         button.textContent = 'Paraksti autorizaciju...';
-        setStatus('5/5: Paraksti ar maku...');
+        setStatus('Paraksti ar maku...');
         
         const timestamp = Math.floor(Date.now() / 1000);
         const message = [
-            'PermRepo Storage Payment Authorization',
-            `Repository: ${repo}`, `Timestamp: ${timestamp}`, `Address: ${userAddress}`,
-            `TxHash: ${tx.hash}`, `UploadedFiles: ${uploadResults.length}`,
+            'PermRepo Backup Authorization',
+            `Repository: ${repo}`,
+            `Timestamp: ${timestamp}`,
+            `Address: ${userAddress}`,
+            `UploadedFiles: ${uploadResults.length}`,
             `ManifestTxId: ${manifestTxId || 'N/A'}`
         ].join('\n');
         
         const signature = await signer.signMessage(message);
         const payload = { 
             address: userAddress, signature, message, timestamp, 
-            txHash: tx.hash, uploadedFiles: uploadResults, manifestTxId 
+            uploadedFiles: uploadResults, manifestTxId 
         };
         
         console.log('Payload:', payload);
@@ -273,7 +251,7 @@ async function buyCreditsAndUpload() {
         else showError('Kluda: ' + e.message);
         const button = document.getElementById('payButton');
         button.disabled = false;
-        button.textContent = filesToUpload.length > 0 ? 'Pirkt kreditus un augsupieladet' : 'Pirkt kreditus un parakstit';
+        button.textContent = 'Augsupieladet un autorizet backupu';
     }
 }
 
