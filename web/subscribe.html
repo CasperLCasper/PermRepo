@@ -3,27 +3,43 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PermRepo — Abonements</title>
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'sha384-gpR0Q6Hx/O+uevlbpbANbS0LWjbejPV1sqD/8w422l/fW8whGY0EPmKw3uG7ACYP'; style-src 'self'; connect-src https://sepolia.base.org https://mainnet.base.org; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none';">
+    <title>PermRepo — Autorizēt Backupu</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'sha384-gpR0Q6Hx/O+uevlbpbANbS0LWjbejPV1sqD/8w422l/fW8whGY0EPmKw3uG7ACYP'; style-src 'self'; connect-src https://sepolia.base.org https://mainnet.base.org https://raw.githubusercontent.com; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none';">
     <meta http-equiv="X-Content-Type-Options" content="nosniff">
     <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
     <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()">
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-<div class="container">
-    <h1>💎 PermRepo Abonements</h1>
-    <p class="subtitle">$2 USDC / 30 dienas — viens abonements vienam NFT (repo)</p>
-    <div class="info-row"><span class="info-label">Cena</span><span class="info-value">2 USDC</span></div>
-    <div class="info-row"><span class="info-label">Periods</span><span class="info-value">30 dienas</span></div>
-    <label for="tokenId">NFT Token ID</label>
-    <input type="number" id="tokenId" name="tokenId" placeholder="Piemēram: 1" min="1">
-    <div class="total">2 USDC</div>
-    <button id="btn" disabled>⏳ Gaida savienojumu...</button>
+<div class="container text-center">
+    <h1>✍️ Autorizēt Backupu</h1>
+    <p class="subtitle">Paraksti ar savu maku, lai autorizētu failu glabāšanu Arweave</p>
+    
+    <div class="info-row text-left">
+        <span class="info-label">Repo</span>
+        <input type="text" id="repoInput" placeholder="piem., lietotajs/repo" value="">
+    </div>
+    
+    <div class="info-row text-left">
+        <span class="info-label">Laika zīmogs</span>
+        <span class="info-value" id="timestamp">-</span>
+    </div>
+    
+    <div class="info-row text-left">
+        <span class="info-label">Faili</span>
+        <span class="info-value" id="fileCount">Nav norādīti</span>
+    </div>
+    
+    <div class="info-row text-left">
+        <span class="info-label">Kopējais izmērs</span>
+        <span class="info-value" id="totalSize">Aprēķina...</span>
+    </div>
+    
+    <button id="payButton" class="sign-button" disabled>⏳ Gaida savienojumu...</button>
     <div class="status" id="status"></div>
     <div class="error" id="error"></div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.2/dist/ethers.umd.min.js" integrity="sha384-gpR0Q6Hx/O+uevlbpbANbS0LWjbejPV1sqD/8w422l/fW8whGY0EPmKw3uG7ACYP" crossorigin="anonymous"></script>
-<script src="js/subscribe.js"></script>
+<script src="js/storage-pay.js"></script>
 </body>
 </html>
