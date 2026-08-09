@@ -32,7 +32,7 @@ class TurboUploader {
                     
                     const fileData = fs.readFileSync(fullPath);
                     
-                    const result = await this.turbo.uploadRawX402Data({
+                    const result = await this.turbo.upload({
                         data: fileData,
                         signal: AbortSignal.timeout(this.uploadTimeout),
                         dataItemOpts: {
@@ -40,27 +40,48 @@ class TurboUploader {
                         }
                     });
                     
-                    results[filePath] = { hash: info.hash, txId: result.id, size: info.size };
+                    results[filePath] = {
+                        hash: info.hash,
+                        txId: result.id,
+                        size: info.size
+                    };
+                    
                     console.log(`✅ Augšupielādēts: ${filePath} → ${result.id}`);
                     break;
+                    
                 } catch (error) {
                     lastError = error;
-                    console.warn(`⚠️ Kļūda: ${error.message}`);
+                    console.warn(`⚠️ Kļūda augšupielādējot ${filePath}: ${error.message}`);
+                    
                     if (attempt < this.maxRetries) {
-                        await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+                        const waitTime = Math.pow(2, attempt) * 1000;
+                        console.log(`⏳ Gaida ${waitTime / 1000}s pirms nākamā mēģinājuma...`);
+                        await new Promise(resolve => setTimeout(resolve, waitTime));
                     }
                 }
             }
-            if (!results[filePath]) throw new Error(`Neizdevās: ${filePath}`);
+            
+            if (!results[filePath]) {
+                throw new Error(
+                    `Neizdevās augšupielādēt ${filePath} pēc ${this.maxRetries} mēģinājumiem. ` +
+                    `Pēdējā kļūda: ${lastError?.message || 'Nezināma kļūda'}`
+                );
+            }
         }
+        
         return results;
     }
 
     async uploadManifest(manifestData, repoName) {
         const data = Buffer.from(JSON.stringify(manifestData, null, 2), 'utf-8');
+        
+        let lastError = null;
+        
         for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
             try {
-                const result = await this.turbo.uploadRawX402Data({
+                console.log(`📤 Augšupielādē manifestu (mēģinājums ${attempt}/${this.maxRetries})`);
+                
+                const result = await this.turbo.upload({
                     data: data,
                     signal: AbortSignal.timeout(this.manifestTimeout),
                     dataItemOpts: {
@@ -73,13 +94,26 @@ class TurboUploader {
                         ]
                     }
                 });
-                console.log(`✅ Manifests: ${result.id}`);
+                
+                console.log(`✅ Manifests augšupielādēts: ${result.id}`);
                 return result.id;
+                
             } catch (error) {
-                if (attempt === this.maxRetries) throw error;
-                await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+                lastError = error;
+                console.warn(`⚠️ Kļūda augšupielādējot manifestu: ${error.message}`);
+                
+                if (attempt < this.maxRetries) {
+                    const waitTime = Math.pow(2, attempt) * 1000;
+                    console.log(`⏳ Gaida ${waitTime / 1000}s pirms nākamā mēģinājuma...`);
+                    await new Promise(resolve => setTimeout(resolve, waitTime));
+                }
             }
         }
+        
+        throw new Error(
+            `Neizdevās augšupielādēt manifestu pēc ${this.maxRetries} mēģinājumiem. ` +
+            `Pēdējā kļūda: ${lastError?.message || 'Nezināma kļūda'}`
+        );
     }
 
     _buildFileTags(repoName, filePath) {
