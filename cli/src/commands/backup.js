@@ -69,8 +69,7 @@ async function backup(opts) {
     
     if (!issueBody) {
         const filesList = Object.entries(changed).map(([filePath, info]) => ({
-            path: filePath,
-            size: info.size
+            path: filePath, size: info.size
         }));
         const filesParam = encodeURIComponent(JSON.stringify(filesList));
         
@@ -78,12 +77,13 @@ async function backup(opts) {
         console.log(`Failu skaits: ${filesList.length}`);
         console.log(`Kopejais izmers: ${(totalChangedSize / 1024).toFixed(1)} KB`);
         console.log(`Augsupieladet: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}&files=${filesParam}`);
-        console.log('Pirms tam parliecinies, ka esi iegadajies Turbo kreditus: https://console.ar.io/topup');
         return;
     }
 
     let uploadedFiles = [];
     let manifestTxId = null;
+    let userSignature = null;
+    let userMessage = null;
     
     try {
         const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
@@ -106,11 +106,15 @@ async function backup(opts) {
             return;
         }
         
+        userSignature = signature;
+        userMessage = message;
         uploadedFiles = files || [];
         manifestTxId = issueManifestTxId || null;
         
         console.log('Glabasanas apmaksa verificeta');
-        if (uploadedFiles.length > 0) console.log(`Augsupieladeti ${uploadedFiles.length} faili`);
+        if (uploadedFiles.length > 0) {
+            console.log(`Augsupieladeti ${uploadedFiles.length} faili no parluka`);
+        }
         if (manifestTxId) console.log(`Manifests: ar://${manifestTxId}`);
         
     } catch (e) {
@@ -118,11 +122,99 @@ async function backup(opts) {
         return;
     }
 
-    // Apvienot failus no parluka un lokalas skenesanas
-    const allUploaded = {};
-    for (const f of uploadedFiles) {
-        allUploaded[f.path] = { hash: '', txId: f.txId, size: f.size };
+    // Ja nav failu no parluka, augsupielade no CLI
+    if (uploadedFiles.length === 0 && Object.keys(changed).length > 0) {
+        try {
+            const { TurboFactory, EthereumSigner } = require('@ardrive/turbo-sdk');
+            
+            // Izmantojam lietotaja parakstu ka signeri
+            const signer = new EthereumSigner(userSignature);
+            const turbo = TurboFactory.authenticated({
+                signer,
+                token: 'base-eth',
+                gatewayUrl: CONFIG.RPC_URL,
+                paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' },
+                uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' }
+            });
+            
+            console.log('Augsupielade failus no CLI...');
+            
+            for (const [filePath, info] of Object.entries(changed)) {
+                const fullPath = path.join(repoPath, filePath);
+                console.log(`  ${filePath}`);
+                
+                try {
+                    const fileData = fs.readFileSync(fullPath);
+                    const result = await turbo.upload({
+                        data: fileData,
+                        dataItemOpts: {
+                            tags: [
+                                { name: 'App-Name', value: 'PermRepo' },
+                                { name: 'Repo', value: repoName },
+                                { name: 'File-Path', value: filePath },
+                                { name: 'Content-Type', value: 'application/octet-stream' },
+                                { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                            ]
+                        }
+                    });
+                    
+                    uploadedFiles.push({ path: filePath, txId: result.id, size: info.size });
+                } catch (uploadError) {
+                    console.warn(`  Kluda: ${uploadError.message}`);
+                }
+            }
+            
+            console.log(`Augsupieladeti ${uploadedFiles.length} faili`);
+            
+            // Manifesta augsupielade
+            if (uploadedFiles.length > 0) {
+                const allUploaded = {};
+                for (const f of uploadedFiles) allUploaded[f.path] = { hash: '', txId: f.txId, size: f.size };
+                for (const [fp, info] of Object.entries(unchanged)) allUploaded[fp] = info;
+                
+                const manifest = {
+                    manifest: 'arweave/paths',
+                    version: '0.2.0',
+                    index: { path: 'README.md' },
+                    paths: {},
+                    metadata: {
+                        repo: repoName,
+                        timestamp: new Date().toISOString(),
+                        generatedBy: 'PermRepo v1.0.0'
+                    }
+                };
+                for (const [fp, info] of Object.entries(allUploaded)) {
+                    manifest.paths[fp] = { id: info.txId };
+                }
+                
+                const manifestData = Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8');
+                const manifestResult = await turbo.upload({
+                    data: manifestData,
+                    dataItemOpts: {
+                        tags: [
+                            { name: 'App-Name', value: 'PermRepo' },
+                            { name: 'Type', value: 'path-manifest' },
+                            { name: 'Repo', value: repoName },
+                            { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
+                            { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                        ]
+                    }
+                });
+                
+                manifestTxId = manifestResult.id;
+                console.log(`Manifests: ar://${manifestTxId}`);
+            }
+            
+        } catch (cliUploadError) {
+            console.log('CLI augsupielade neizdevas:', cliUploadError.message);
+            console.log('Iespejams, nepietiek kreditu. Pirms backupa iegadajies kreditus: https://console.ar.io/topup');
+            return;
+        }
     }
+
+    // Apvienot failus
+    const allUploaded = {};
+    for (const f of uploadedFiles) allUploaded[f.path] = { hash: '', txId: f.txId, size: f.size };
     for (const [fp, info] of Object.entries(changed)) {
         if (!allUploaded[fp]) allUploaded[fp] = info;
     }
