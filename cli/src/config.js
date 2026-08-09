@@ -22,7 +22,7 @@ const CONFIG = {
     TURBO_UPLOAD_URL: 'https://upload.services.ar-io.dev',
     TURBO_PAYMENT_URL: 'https://payment.services.ar-io.dev',
     ARWEAVE_GATEWAY: 'https://arweave.net',
-    TURBO_TOKEN_TYPE: 'base-usdc',
+    TURBO_TOKEN_TYPE: 'base-eth',
     
     // ==========================================
     // WEB URL
