@@ -13,58 +13,58 @@ function getRepoHash(repoName) {
 
 async function backup(opts) {
     const walletAddress = opts.wallet || CONFIG.WALLET_ADDRESS;
-    if (!walletAddress) { console.log('❌ Nav iestatīts WALLET_ADDRESS.'); return; }
+    if (!walletAddress) { console.log('Nav iestatits WALLET_ADDRESS.'); return; }
 
     const repoPath = path.resolve(opts.repo || '.');
     const repoName = getRepoName(repoPath).trim();
     const repoHash = getRepoHash(repoName);
     const provider = new ethers.JsonRpcProvider(CONFIG.RPC_URL);
 
-    console.log('🚀 PermRepo — Inkrementāls backups');
+    console.log('PermRepo — Inkrementals backups');
     console.log('=======================================================');
-    console.log(`📦 Repozitorijs: ${repoName}`);
-    console.log(`👛 Maks: ${walletAddress}`);
+    console.log(`Repozitorijs: ${repoName}`);
+    console.log(`Maks: ${walletAddress}`);
 
-    // NFT pārbaude
+    // NFT parbaude
     const tokenId = await getExistingNFT(provider, CONFIG.NFT_ADDRESS, repoHash);
     if (tokenId === 0n || tokenId === 0) {
-        console.log('❌ Nav izveidots NFT šim repozitorijam.');
-        console.log(`🔗 Izveidot NFT: ${CONFIG.WEB_URL}${CONFIG.NFT_PAGE}?repo=${encodeURIComponent(repoName)}`);
+        console.log('Nav izveidots NFT sim repozitorijam.');
+        console.log(`Izveidot NFT: ${CONFIG.WEB_URL}${CONFIG.NFT_PAGE}?repo=${encodeURIComponent(repoName)}`);
         return;
     }
 
-    // Īpašnieka pārbaude
+    // Ipasnieka parbaude
     const nftContract = new ethers.Contract(CONFIG.NFT_ADDRESS, ['function ownerOf(uint256) view returns (address)'], provider);
     const nftOwner = await nftContract.ownerOf(tokenId);
     if (nftOwner.toLowerCase() !== walletAddress.toLowerCase()) {
-        console.log('❌ NFT nepieder šim makam.');
+        console.log('NFT nepieder sim makam.');
         return;
     }
-    console.log('✅ NFT īpašumtiesības apstiprinātas');
+    console.log('NFT ipasumtiesibas apstiprinatas');
 
-    // Abonementa pārbaude
+    // Abonementa parbaude
     const subscribed = await checkSubscription(provider, CONFIG.SUBSCRIPTION_ADDRESS, tokenId);
     if (!subscribed) {
-        console.log('❌ Nav aktīva abonementa.');
-        console.log(`🔗 Aktivizēt abonementu: ${CONFIG.WEB_URL}${CONFIG.SUBSCRIBE_PAGE}`);
+        console.log('Nav aktiva abonementa.');
+        console.log(`Aktivizet abonementu: ${CONFIG.WEB_URL}${CONFIG.SUBSCRIBE_PAGE}`);
         return;
     }
-    console.log('✅ Abonements aktīvs');
+    console.log('Abonements aktivs');
 
-    // Failu skenēšana pirms apmaksas
+    // Failu skenesana
     const currentFiles = scanFiles(repoPath);
     const lockData = loadLock(repoPath);
     const { unchanged, changed, deleted } = compareWithLock(currentFiles, lockData);
     
     if (Object.keys(changed).length === 0 && deleted.length === 0) {
-        console.log('✅ Nav izmaiņu kopš pēdējā backupa.');
+        console.log('Nav izmainu kops pedeja backupa.');
         return;
     }
 
     const totalChangedSize = Object.values(changed).reduce((s, f) => s + f.size, 0);
-    console.log(`📊 Mainīti: ${Object.keys(changed).length} faili, ${(totalChangedSize / 1024).toFixed(1)} KB`);
+    console.log(`Mainiti: ${Object.keys(changed).length} faili, ${(totalChangedSize / 1024).toFixed(1)} KB`);
 
-    // Glabāšanas apmaksas verifikācija
+    // Glabasanas apmaksas verifikacija
     const issueBody = process.env.ISSUE_BODY;
     
     if (!issueBody) {
@@ -73,13 +73,12 @@ async function backup(opts) {
             size: info.size
         }));
         const filesParam = encodeURIComponent(JSON.stringify(filesList));
-        const estimatedCost = Math.max(0.001, totalChangedSize / 1000000 * 0.001).toFixed(4);
         
-        console.log('💳 Nepieciešams apmaksāt glabāšanu.');
-        console.log(`📊 Failu skaits: ${filesList.length}`);
-        console.log(`📦 Kopējais izmērs: ${(totalChangedSize / 1024).toFixed(1)} KB`);
-        console.log(`💰 Aptuvenās izmaksas: ~${estimatedCost} ETH`);
-        console.log(`🔗 Apmaksāt glabāšanu: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}&files=${filesParam}`);
+        console.log('Nepieciesams augsupieladet failus.');
+        console.log(`Failu skaits: ${filesList.length}`);
+        console.log(`Kopejais izmers: ${(totalChangedSize / 1024).toFixed(1)} KB`);
+        console.log(`Augsupieladet: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}&files=${filesParam}`);
+        console.log('Pirms tam parliecinies, ka esi iegadajies Turbo kreditus: https://console.ar.io/topup');
         return;
     }
 
@@ -89,38 +88,37 @@ async function backup(opts) {
     try {
         const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
         if (!jsonMatch) {
-            console.log('❌ Neizdevās atrast JSON datus.');
+            console.log('Neizdevas atrast JSON datus.');
             return;
         }
         
         const payload = JSON.parse(jsonMatch[1]);
-        const { signature, message, timestamp, txHash, uploadedFiles: files, manifestTxId: issueManifestTxId } = payload;
+        const { signature, message, timestamp, uploadedFiles: files, manifestTxId: issueManifestTxId } = payload;
         
         if (Math.floor(Date.now() / 1000) - timestamp > CONFIG.SIGNATURE_TIMEOUT_SECONDS) {
-            console.log('❌ Paraksts ir novecojis (>10 min).');
+            console.log('Paraksts ir novecojis (>10 min).');
             return;
         }
         
         const recovered = ethers.verifyMessage(message, signature);
         if (recovered.toLowerCase() !== walletAddress.toLowerCase()) {
-            console.log('❌ Paraksts neatbilst maka adresei.');
+            console.log('Paraksts neatbilst maka adresei.');
             return;
         }
         
         uploadedFiles = files || [];
         manifestTxId = issueManifestTxId || null;
         
-        console.log('✅ Glabāšanas apmaksa verificēta');
-        if (txHash) console.log(`🔗 Transakcija: https://sepolia.basescan.org/tx/${txHash}`);
-        if (uploadedFiles.length > 0) console.log(`📤 Augšupielādēti ${uploadedFiles.length} faili`);
-        if (manifestTxId) console.log(`📋 Manifests: ar://${manifestTxId}`);
+        console.log('Glabasanas apmaksa verificeta');
+        if (uploadedFiles.length > 0) console.log(`Augsupieladeti ${uploadedFiles.length} faili`);
+        if (manifestTxId) console.log(`Manifests: ar://${manifestTxId}`);
         
     } catch (e) {
-        console.log('❌ Kļūda verificējot parakstu:', e.message);
+        console.log('Kluda verificejot parakstu:', e.message);
         return;
     }
 
-    // Apvienot failus no pārlūka un lokālās skenēšanas
+    // Apvienot failus no parluka un lokalas skenesanas
     const allUploaded = {};
     for (const f of uploadedFiles) {
         allUploaded[f.path] = { hash: '', txId: f.txId, size: f.size };
@@ -132,9 +130,9 @@ async function backup(opts) {
     // Merkle root
     const allFiles = { ...unchanged, ...allUploaded };
     const { root: merkleRoot } = createMerkleTree(allFiles);
-    console.log(`🌳 Merkle root: ${merkleRoot}`);
+    console.log(`Merkle root: ${merkleRoot}`);
 
-    // Lokālā manifesta kopija
+    // Lokala manifesta kopija
     if (manifestTxId) {
         const manifest = {
             manifest: 'arweave/paths',
@@ -159,16 +157,16 @@ async function backup(opts) {
 
     // Lock fails
     saveLock(repoPath, unchanged, allUploaded);
-    if (deleted.length > 0) console.log(`🗑️ Dzēstie faili: ${deleted.join(', ')}`);
+    if (deleted.length > 0) console.log(`Dzestie faili: ${deleted.join(', ')}`);
 
     const totalSize = Object.values(allUploaded).reduce((s, f) => s + f.size, 0);
     
     console.log('=======================================================');
-    console.log('✅ BACKUPS VEIKSMĪGS!');
-    console.log(`📊 Faili:     ${Object.keys(allUploaded).length}`);
-    console.log(`📦 Izmērs:    ${(totalSize / 1024).toFixed(1)} KB`);
-    console.log(`🌳 Merkle:    ${merkleRoot}`);
-    if (manifestTxId) console.log(`📋 Manifests: ar://${manifestTxId}`);
+    console.log('BACKUPS VEIKSMIGS!');
+    console.log(`Faili:     ${Object.keys(allUploaded).length}`);
+    console.log(`Izmers:    ${(totalSize / 1024).toFixed(1)} KB`);
+    console.log(`Merkle:    ${merkleRoot}`);
+    if (manifestTxId) console.log(`Manifests: ar://${manifestTxId}`);
     console.log('=======================================================');
 
     return {
