@@ -1,9 +1,15 @@
+const { TurboFactory } = require('@ardrive/turbo-sdk');
 const fs = require('node:fs');
 const path = require('node:path');
 const CONFIG = require('../config');
 
 class TurboUploader {
     constructor() {
+        this.turbo = TurboFactory.unauthenticated({
+            token: CONFIG.TURBO_TOKEN_TYPE,
+            uploadServiceConfig: { url: CONFIG.TURBO_UPLOAD_URL },
+            paymentServiceConfig: { url: CONFIG.TURBO_PAYMENT_URL }
+        });
         this.maxRetries = CONFIG.MAX_UPLOAD_RETRIES;
         this.uploadTimeout = CONFIG.UPLOAD_TIMEOUT_MS;
         this.manifestTimeout = CONFIG.MANIFEST_UPLOAD_TIMEOUT_MS;
@@ -12,91 +18,65 @@ class TurboUploader {
     async uploadChangedFiles(repoPath, files, repoName) {
         const results = {};
         const fileEntries = Object.entries(files);
-        
-        for (let i = 0; i < fileEntries.length; i++) {
-            const [filePath, info] = fileEntries[i];
+        for (const [filePath, info] of fileEntries) {
             const fullPath = path.join(repoPath, filePath);
-            
-            let lastError = null;
-            
             for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
                 try {
-                    console.log(`📤 Augšupielādē: ${filePath} (mēģinājums ${attempt}/${this.maxRetries})`);
-                    
                     const fileData = fs.readFileSync(fullPath);
-                    
-                    const response = await fetch(`${CONFIG.TURBO_UPLOAD_URL}/v1/tx`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/octet-stream' },
-                        body: fileData,
-                        signal: AbortSignal.timeout(this.uploadTimeout)
+                    const result = await this.turbo.uploadRawX402Data({
+                        data: fileData,
+                        signal: AbortSignal.timeout(this.uploadTimeout),
+                        dataItemOpts: { tags: this._buildFileTags(repoName, filePath) }
                     });
-                    
-                    if (!response.ok) {
-                        const errorText = await response.text();
-                        throw new Error(`HTTP ${response.status}: ${errorText}`);
-                    }
-                    
-                    const result = await response.json();
-                    
-                    results[filePath] = {
-                        hash: info.hash,
-                        txId: result.id,
-                        size: info.size
-                    };
-                    
-                    console.log(`✅ Augšupielādēts: ${filePath} → ${result.id}`);
+                    results[filePath] = { hash: info.hash, txId: result.id, size: info.size };
                     break;
-                    
                 } catch (error) {
-                    lastError = error;
-                    console.warn(`⚠️ Kļūda: ${error.message}`);
-                    if (attempt < this.maxRetries) {
-                        const waitTime = Math.pow(2, attempt) * 1000;
-                        console.log(`⏳ Gaida ${waitTime / 1000}s...`);
-                        await new Promise(r => setTimeout(r, waitTime));
-                    }
+                    if (attempt === this.maxRetries) throw error;
+                    await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
                 }
             }
-            
-            if (!results[filePath]) {
-                throw new Error(`Neizdevās augšupielādēt ${filePath} pēc ${this.maxRetries} mēģinājumiem.`);
-            }
         }
-        
         return results;
     }
 
     async uploadManifest(manifestData, repoName) {
         const data = Buffer.from(JSON.stringify(manifestData, null, 2), 'utf-8');
-        
         for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
             try {
-                console.log(`📤 Augšupielādē manifestu...`);
-                
-                const response = await fetch(`${CONFIG.TURBO_UPLOAD_URL}/v1/tx`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/octet-stream' },
-                    body: data,
-                    signal: AbortSignal.timeout(this.manifestTimeout)
+                const result = await this.turbo.uploadRawX402Data({
+                    data: data,
+                    signal: AbortSignal.timeout(this.manifestTimeout),
+                    dataItemOpts: {
+                        tags: [
+                            { name: 'App-Name', value: CONFIG.APP_NAME },
+                            { name: 'Type', value: 'path-manifest' },
+                            { name: 'Repo', value: repoName },
+                            { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
+                            { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                        ]
+                    }
                 });
-                
-                if (!response.ok) {
-                    const errorText = await response.text();
-                    throw new Error(`HTTP ${response.status}: ${errorText}`);
-                }
-                
-                const result = await response.json();
-                console.log(`✅ Manifests: ${result.id}`);
                 return result.id;
-                
             } catch (error) {
                 if (attempt === this.maxRetries) throw error;
-                const waitTime = Math.pow(2, attempt) * 1000;
-                console.log(`⏳ Gaida ${waitTime / 1000}s...`);
-                await new Promise(r => setTimeout(r, waitTime));
+                await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
             }
         }
+    }
+
+    _buildFileTags(repoName, filePath) {
+        return [
+            { name: 'App-Name', value: CONFIG.APP_NAME },
+            { name: 'Repo', value: repoName },
+            { name: 'File-Path', value: filePath },
+            { name: 'Content-Type', value: this._getMimeType(filePath) },
+            { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+        ];
+    }
+
+    _getMimeType(filename) {
+        const ext = path.extname(filename).toLowerCase();
+        return CONFIG.MIME_TYPES[ext] || CONFIG.DEFAULT_MIME_TYPE;
     }
 }
 
