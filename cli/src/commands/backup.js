@@ -4,7 +4,7 @@ const path = require('node:path');
 const CONFIG = require('../config');
 const { scanFiles, compareWithLock, saveLock, getRepoName } = require('../git/scanner');
 const { createMerkleTree } = require('../merkle/tree');
-const { getExistingNFT, addBackup } = require('../blockchain/nft');
+const { getExistingNFT } = require('../blockchain/nft');
 const { checkSubscription } = require('../blockchain/subscription');
 
 function getRepoHash(repoName) {
@@ -76,7 +76,6 @@ async function backup(opts) {
 
     let uploadedFiles = [];
     let manifestTxId = null;
-    let userSignature = null;
     
     try {
         const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
@@ -97,7 +96,6 @@ async function backup(opts) {
             console.log('Paraksts neatbilst maka adresei.'); return;
         }
         
-        userSignature = signature;
         uploadedFiles = files || [];
         manifestTxId = issueManifestTxId || null;
         
@@ -119,32 +117,6 @@ async function backup(opts) {
     const { root: merkleRoot } = createMerkleTree(allFiles);
     console.log(`Merkle root: ${merkleRoot}`);
 
-    // === ADD BACKUP TO BLOCKCHAIN ===
-    if (manifestTxId && tokenId && userSignature) {
-        try {
-            console.log('Ieraksta backupu blockchain...');
-            
-            const manifestHash = ethers.id(manifestTxId);
-            const deadline = Math.floor(Date.now() / 1000) + 3600;
-            
-            await addBackup({
-                signer: null, // nav vajadzīgs, jo izmanto provider
-                nftAddress: CONFIG.NFT_ADDRESS,
-                tokenId,
-                manifestHash,
-                merkleRoot,
-                manifestURI: `ar://${manifestTxId}`,
-                deadline,
-                signature: userSignature
-            });
-            
-            console.log('Blockchain ieraksts veiksmigs!');
-            
-        } catch (e) {
-            console.warn('Neizdevas ierakstit blockchain:', e.message);
-        }
-    }
-
     // Lokala manifesta kopija
     if (manifestTxId) {
         const manifest = {
@@ -163,6 +135,21 @@ async function backup(opts) {
     // Lock fails
     saveLock(repoPath, unchanged, allUploaded);
     if (deleted.length > 0) console.log(`Dzestie faili: ${deleted.join(', ')}`);
+
+    // === AUTOMATISKI COMMIT LOCK FAILU (tikai GitHub Actions) ===
+    if (process.env.GITHUB_TOKEN) {
+        try {
+            const { execSync } = require('node:child_process');
+            execSync('git config user.name "github-actions[bot]"');
+            execSync('git config user.email "41898282+github-actions[bot]@users.noreply.github.com"');
+            execSync(`git add ${CONFIG.LOCK_FILE_NAME}`);
+            execSync(`git commit -m "Update lock file after backup [skip ci]"`);
+            execSync('git push');
+            console.log('Lock fails commitots uz GitHub');
+        } catch (e) {
+            console.warn('Neizdevas commit lock failu:', e.message);
+        }
+    }
 
     const totalSize = Object.values(allUploaded).reduce((s, f) => s + f.size, 0);
     
