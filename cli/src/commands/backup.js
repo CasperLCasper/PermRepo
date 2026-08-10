@@ -1,8 +1,10 @@
 const { ethers } = require('ethers');
+const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const CONFIG = require('../config');
 const { scanFiles, compareWithLock, saveLock, getRepoName } = require('../git/scanner');
+const { createManifest } = require('../manifest/create');
 const { createMerkleTree } = require('../merkle/tree');
 const { getExistingNFT } = require('../blockchain/nft');
 const { checkSubscription } = require('../blockchain/subscription');
@@ -32,19 +34,14 @@ async function backup(opts) {
         console.log(`Izveidot NFT: ${CONFIG.WEB_URL}${CONFIG.NFT_PAGE}?repo=${encodeURIComponent(repoName)}`);
         return;
     }
-
-    // Ipasnieka parbaude
     const nftContract = new ethers.Contract(CONFIG.NFT_ADDRESS, ['function ownerOf(uint256) view returns (address)'], provider);
-    const nftOwner = await nftContract.ownerOf(tokenId);
-    if (nftOwner.toLowerCase() !== walletAddress.toLowerCase()) {
-        console.log('NFT nepieder sim makam.');
-        return;
+    if ((await nftContract.ownerOf(tokenId)).toLowerCase() !== walletAddress.toLowerCase()) {
+        console.log('NFT nepieder sim makam.'); return;
     }
     console.log('NFT ipasumtiesibas apstiprinatas');
 
     // Abonementa parbaude
-    const subscribed = await checkSubscription(provider, CONFIG.SUBSCRIPTION_ADDRESS, tokenId);
-    if (!subscribed) {
+    if (!(await checkSubscription(provider, CONFIG.SUBSCRIPTION_ADDRESS, tokenId))) {
         console.log('Nav aktiva abonementa.');
         console.log(`Aktivizet abonementu: ${CONFIG.WEB_URL}${CONFIG.SUBSCRIBE_PAGE}`);
         return;
@@ -57,218 +54,87 @@ async function backup(opts) {
     const { unchanged, changed, deleted } = compareWithLock(currentFiles, lockData);
     
     if (Object.keys(changed).length === 0 && deleted.length === 0) {
-        console.log('Nav izmainu kops pedeja backupa.');
-        return;
+        console.log('Nav izmainu kops pedeja backupa.'); return;
     }
 
     const totalChangedSize = Object.values(changed).reduce((s, f) => s + f.size, 0);
     console.log(`Mainiti: ${Object.keys(changed).length} faili, ${(totalChangedSize / 1024).toFixed(1)} KB`);
 
-    // Glabasanas apmaksas verifikacija
-    const issueBody = process.env.ISSUE_BODY;
-    
-    if (!issueBody) {
-        const filesList = Object.entries(changed).map(([filePath, info]) => ({
-            path: filePath, size: info.size
-        }));
-        const filesParam = encodeURIComponent(JSON.stringify(filesList));
-        
-        console.log('Nepieciesams augsupieladet failus.');
-        console.log(`Failu skaits: ${filesList.length}`);
-        console.log(`Kopejais izmers: ${(totalChangedSize / 1024).toFixed(1)} KB`);
-        console.log(`Augsupieladet: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}&files=${filesParam}`);
-        return;
-    }
+    // Izveidot lokalo serveri
+    const PORT = 3000;
+    const filesList = Object.entries(changed).map(([fp, info]) => ({
+        path: fp, size: info.size, content: fs.readFileSync(path.join(repoPath, fp), 'utf-8')
+    }));
 
-    let uploadedFiles = [];
-    let manifestTxId = null;
-    let userSignature = null;
-    let userMessage = null;
-    
-    try {
-        const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
-        if (!jsonMatch) {
-            console.log('Neizdevas atrast JSON datus.');
-            return;
-        }
+    const server = http.createServer((req, res) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
         
-        const payload = JSON.parse(jsonMatch[1]);
-        const { signature, message, timestamp, uploadedFiles: files, manifestTxId: issueManifestTxId } = payload;
-        
-        if (Math.floor(Date.now() / 1000) - timestamp > CONFIG.SIGNATURE_TIMEOUT_SECONDS) {
-            console.log('Paraksts ir novecojis (>10 min).');
-            return;
-        }
-        
-        const recovered = ethers.verifyMessage(message, signature);
-        if (recovered.toLowerCase() !== walletAddress.toLowerCase()) {
-            console.log('Paraksts neatbilst maka adresei.');
-            return;
-        }
-        
-        userSignature = signature;
-        userMessage = message;
-        uploadedFiles = files || [];
-        manifestTxId = issueManifestTxId || null;
-        
-        console.log('Glabasanas apmaksa verificeta');
-        if (uploadedFiles.length > 0) {
-            console.log(`Augsupieladeti ${uploadedFiles.length} faili no parluka`);
-        }
-        if (manifestTxId) console.log(`Manifests: ar://${manifestTxId}`);
-        
-    } catch (e) {
-        console.log('Kluda verificejot parakstu:', e.message);
-        return;
-    }
-
-    // Ja nav failu no parluka, augsupielade no CLI
-    if (uploadedFiles.length === 0 && Object.keys(changed).length > 0) {
-        try {
-            const { TurboFactory, EthereumSigner } = require('@ardrive/turbo-sdk');
-            
-            // Izmantojam lietotaja parakstu ka signeri
-            const signer = new EthereumSigner(userSignature);
-            const turbo = TurboFactory.authenticated({
-                signer,
-                token: 'base-eth',
-                gatewayUrl: CONFIG.RPC_URL,
-                paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' },
-                uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' }
-            });
-            
-            console.log('Augsupielade failus no CLI...');
-            
-            for (const [filePath, info] of Object.entries(changed)) {
-                const fullPath = path.join(repoPath, filePath);
-                console.log(`  ${filePath}`);
-                
+        if (req.url === '/get-files') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ repoName, files: filesList }));
+        } else if (req.url === '/complete' && req.method === 'POST') {
+            let body = '';
+            req.on('data', chunk => body += chunk);
+            req.on('end', async () => {
                 try {
-                    const fileData = fs.readFileSync(fullPath);
-                    const result = await turbo.upload({
-                        data: fileData,
-                        dataItemOpts: {
-                            tags: [
-                                { name: 'App-Name', value: 'PermRepo' },
-                                { name: 'Repo', value: repoName },
-                                { name: 'File-Path', value: filePath },
-                                { name: 'Content-Type', value: 'application/octet-stream' },
-                                { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
-                            ]
-                        }
-                    });
+                    const result = JSON.parse(body);
+                    const { uploadedFiles, manifestTxId } = result;
                     
-                    uploadedFiles.push({ path: filePath, txId: result.id, size: info.size });
-                } catch (uploadError) {
-                    console.warn(`  Kluda: ${uploadError.message}`);
+                    const allUploaded = {};
+                    for (const f of uploadedFiles) allUploaded[f.path] = { hash: '', txId: f.txId, size: f.size };
+                    for (const [fp, info] of Object.entries(unchanged)) allUploaded[fp] = info;
+                    
+                    const allFiles = { ...unchanged, ...allUploaded };
+                    const { root: merkleRoot } = createMerkleTree(allFiles);
+                    
+                    const manifest = createManifest(unchanged, allUploaded, repoName);
+                    const backupDir = path.join(repoPath, CONFIG.PERMAREPO_DIR, CONFIG.BACKUPS_DIR);
+                    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+                    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+                    fs.writeFileSync(path.join(backupDir, `manifest-${ts}.json`), JSON.stringify(manifest, null, 2));
+                    
+                    saveLock(repoPath, unchanged, allUploaded);
+                    
+                    const totalSize = Object.values(allUploaded).reduce((s, f) => s + f.size, 0);
+                    
+                    console.log('=======================================================');
+                    console.log('BACKUPS VEIKSMIGS!');
+                    console.log(`Faili: ${Object.keys(allUploaded).length}`);
+                    console.log(`Izmers: ${(totalSize / 1024).toFixed(1)} KB`);
+                    console.log(`Merkle: ${merkleRoot}`);
+                    console.log(`Manifests: ar://${manifestTxId}`);
+                    console.log('=======================================================');
+                    
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: true, merkleRoot, manifestTxId }));
+                    
+                    server.close();
+                    process.exit(0);
+                    
+                } catch (e) {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ error: e.message }));
                 }
+            });
+        } else {
+            // Serve statisko lapu
+            const htmlPath = path.join(__dirname, '..', '..', '..', 'web', 'localhost-upload.html');
+            if (fs.existsSync(htmlPath)) {
+                res.writeHead(200, { 'Content-Type': 'text/html' });
+                res.end(fs.readFileSync(htmlPath, 'utf-8'));
+            } else {
+                res.writeHead(200, { 'Content-Type': 'text/html' });
+                res.end(`<html><body><h1>PermRepo Localhost Bridge</h1><p>Atver ${CONFIG.WEB_URL}/localhost-upload.html</p></body></html>`);
             }
-            
-            console.log(`Augsupieladeti ${uploadedFiles.length} faili`);
-            
-            // Manifesta augsupielade
-            if (uploadedFiles.length > 0) {
-                const allUploaded = {};
-                for (const f of uploadedFiles) allUploaded[f.path] = { hash: '', txId: f.txId, size: f.size };
-                for (const [fp, info] of Object.entries(unchanged)) allUploaded[fp] = info;
-                
-                const manifest = {
-                    manifest: 'arweave/paths',
-                    version: '0.2.0',
-                    index: { path: 'README.md' },
-                    paths: {},
-                    metadata: {
-                        repo: repoName,
-                        timestamp: new Date().toISOString(),
-                        generatedBy: 'PermRepo v1.0.0'
-                    }
-                };
-                for (const [fp, info] of Object.entries(allUploaded)) {
-                    manifest.paths[fp] = { id: info.txId };
-                }
-                
-                const manifestData = Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8');
-                const manifestResult = await turbo.upload({
-                    data: manifestData,
-                    dataItemOpts: {
-                        tags: [
-                            { name: 'App-Name', value: 'PermRepo' },
-                            { name: 'Type', value: 'path-manifest' },
-                            { name: 'Repo', value: repoName },
-                            { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
-                            { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
-                        ]
-                    }
-                });
-                
-                manifestTxId = manifestResult.id;
-                console.log(`Manifests: ar://${manifestTxId}`);
-            }
-            
-        } catch (cliUploadError) {
-            console.log('CLI augsupielade neizdevas:', cliUploadError.message);
-            console.log('Iespejams, nepietiek kreditu. Pirms backupa iegadajies kreditus: https://console.ar.io/topup');
-            return;
         }
-    }
+    });
 
-    // Apvienot failus
-    const allUploaded = {};
-    for (const f of uploadedFiles) allUploaded[f.path] = { hash: '', txId: f.txId, size: f.size };
-    for (const [fp, info] of Object.entries(changed)) {
-        if (!allUploaded[fp]) allUploaded[fp] = info;
-    }
-
-    // Merkle root
-    const allFiles = { ...unchanged, ...allUploaded };
-    const { root: merkleRoot } = createMerkleTree(allFiles);
-    console.log(`Merkle root: ${merkleRoot}`);
-
-    // Lokala manifesta kopija
-    if (manifestTxId) {
-        const manifest = {
-            manifest: 'arweave/paths',
-            version: '0.2.0',
-            index: { path: 'README.md' },
-            paths: {},
-            metadata: {
-                repo: repoName,
-                timestamp: new Date().toISOString(),
-                generatedBy: 'PermRepo v1.0.0'
-            }
-        };
-        for (const [fp, info] of Object.entries(allUploaded)) {
-            manifest.paths[fp] = { id: info.txId };
-        }
-        
-        const backupDir = path.join(repoPath, CONFIG.PERMAREPO_DIR, CONFIG.BACKUPS_DIR);
-        if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-        const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        fs.writeFileSync(path.join(backupDir, `manifest-${ts}.json`), JSON.stringify(manifest, null, 2));
-    }
-
-    // Lock fails
-    saveLock(repoPath, unchanged, allUploaded);
-    if (deleted.length > 0) console.log(`Dzestie faili: ${deleted.join(', ')}`);
-
-    const totalSize = Object.values(allUploaded).reduce((s, f) => s + f.size, 0);
-    
-    console.log('=======================================================');
-    console.log('BACKUPS VEIKSMIGS!');
-    console.log(`Faili:     ${Object.keys(allUploaded).length}`);
-    console.log(`Izmers:    ${(totalSize / 1024).toFixed(1)} KB`);
-    console.log(`Merkle:    ${merkleRoot}`);
-    if (manifestTxId) console.log(`Manifests: ar://${manifestTxId}`);
-    console.log('=======================================================');
-
-    return {
-        status: 'success',
-        manifestTxId,
-        merkleRoot,
-        filesChanged: Object.keys(allUploaded).length,
-        totalSize,
-        tokenId: tokenId.toString()
-    };
+    server.listen(PORT, () => {
+        console.log(`Lokalais serveris: http://localhost:${PORT}`);
+        console.log('Atver parlukprogrammu...');
+        const { exec } = require('node:child_process');
+        exec(`xdg-open http://localhost:${PORT}`).unref();
+    });
 }
 
 function loadLock(repoPath) {
