@@ -1,10 +1,8 @@
 const { ethers } = require('ethers');
-const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const CONFIG = require('../config');
 const { scanFiles, compareWithLock, saveLock, getRepoName } = require('../git/scanner');
-const { createManifest } = require('../manifest/create');
 const { createMerkleTree } = require('../merkle/tree');
 const { getExistingNFT } = require('../blockchain/nft');
 const { checkSubscription } = require('../blockchain/subscription');
@@ -60,81 +58,98 @@ async function backup(opts) {
     const totalChangedSize = Object.values(changed).reduce((s, f) => s + f.size, 0);
     console.log(`Mainiti: ${Object.keys(changed).length} faili, ${(totalChangedSize / 1024).toFixed(1)} KB`);
 
-    // Izveidot lokalo serveri
-    const PORT = 3000;
-    const filesList = Object.entries(changed).map(([fp, info]) => ({
-        path: fp, size: info.size, content: fs.readFileSync(path.join(repoPath, fp), 'utf-8')
-    }));
-
-    const server = http.createServer((req, res) => {
-        res.setHeader('Access-Control-Allow-Origin', '*');
+    // Glabasanas apmaksas verifikacija
+    const issueBody = process.env.ISSUE_BODY;
+    
+    if (!issueBody) {
+        const filesList = Object.entries(changed).map(([filePath, info]) => ({
+            path: filePath, size: info.size
+        }));
+        const filesParam = encodeURIComponent(JSON.stringify(filesList));
         
-        if (req.url === '/get-files') {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ repoName, files: filesList }));
-        } else if (req.url === '/complete' && req.method === 'POST') {
-            let body = '';
-            req.on('data', chunk => body += chunk);
-            req.on('end', async () => {
-                try {
-                    const result = JSON.parse(body);
-                    const { uploadedFiles, manifestTxId } = result;
-                    
-                    const allUploaded = {};
-                    for (const f of uploadedFiles) allUploaded[f.path] = { hash: '', txId: f.txId, size: f.size };
-                    for (const [fp, info] of Object.entries(unchanged)) allUploaded[fp] = info;
-                    
-                    const allFiles = { ...unchanged, ...allUploaded };
-                    const { root: merkleRoot } = createMerkleTree(allFiles);
-                    
-                    const manifest = createManifest(unchanged, allUploaded, repoName);
-                    const backupDir = path.join(repoPath, CONFIG.PERMAREPO_DIR, CONFIG.BACKUPS_DIR);
-                    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-                    const ts = new Date().toISOString().replace(/[:.]/g, '-');
-                    fs.writeFileSync(path.join(backupDir, `manifest-${ts}.json`), JSON.stringify(manifest, null, 2));
-                    
-                    saveLock(repoPath, unchanged, allUploaded);
-                    
-                    const totalSize = Object.values(allUploaded).reduce((s, f) => s + f.size, 0);
-                    
-                    console.log('=======================================================');
-                    console.log('BACKUPS VEIKSMIGS!');
-                    console.log(`Faili: ${Object.keys(allUploaded).length}`);
-                    console.log(`Izmers: ${(totalSize / 1024).toFixed(1)} KB`);
-                    console.log(`Merkle: ${merkleRoot}`);
-                    console.log(`Manifests: ar://${manifestTxId}`);
-                    console.log('=======================================================');
-                    
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ success: true, merkleRoot, manifestTxId }));
-                    
-                    server.close();
-                    process.exit(0);
-                    
-                } catch (e) {
-                    res.writeHead(500, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: e.message }));
-                }
-            });
-        } else {
-            // Serve statisko lapu
-            const htmlPath = path.join(__dirname, '..', '..', '..', 'web', 'localhost-upload.html');
-            if (fs.existsSync(htmlPath)) {
-                res.writeHead(200, { 'Content-Type': 'text/html' });
-                res.end(fs.readFileSync(htmlPath, 'utf-8'));
-            } else {
-                res.writeHead(200, { 'Content-Type': 'text/html' });
-                res.end(`<html><body><h1>PermRepo Localhost Bridge</h1><p>Atver ${CONFIG.WEB_URL}/localhost-upload.html</p></body></html>`);
-            }
-        }
-    });
+        console.log('Nepieciesams augsupieladet failus.');
+        console.log(`Failu skaits: ${filesList.length}`);
+        console.log(`Kopejais izmers: ${(totalChangedSize / 1024).toFixed(1)} KB`);
+        console.log(`Augsupieladet: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}&files=${filesParam}`);
+        return;
+    }
 
-    server.listen(PORT, () => {
-        console.log(`Lokalais serveris: http://localhost:${PORT}`);
-        console.log('Atver parlukprogrammu...');
-        const { exec } = require('node:child_process');
-        exec(`xdg-open http://localhost:${PORT}`).unref();
-    });
+    let uploadedFiles = [];
+    let manifestTxId = null;
+    
+    try {
+        const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
+        if (!jsonMatch) {
+            console.log('Neizdevas atrast JSON datus.');
+            return;
+        }
+        
+        const payload = JSON.parse(jsonMatch[1]);
+        const { signature, message, timestamp, uploadedFiles: files, manifestTxId: issueManifestTxId } = payload;
+        
+        if (Math.floor(Date.now() / 1000) - timestamp > CONFIG.SIGNATURE_TIMEOUT_SECONDS) {
+            console.log('Paraksts ir novecojis (>10 min).'); return;
+        }
+        
+        const recovered = ethers.verifyMessage(message, signature);
+        if (recovered.toLowerCase() !== walletAddress.toLowerCase()) {
+            console.log('Paraksts neatbilst maka adresei.'); return;
+        }
+        
+        uploadedFiles = files || [];
+        manifestTxId = issueManifestTxId || null;
+        
+        console.log('Glabasanas apmaksa verificeta');
+        if (uploadedFiles.length > 0) console.log(`Augsupieladeti ${uploadedFiles.length} faili`);
+        if (manifestTxId) console.log(`Manifests: ar://${manifestTxId}`);
+        
+    } catch (e) {
+        console.log('Kluda verificejot parakstu:', e.message); return;
+    }
+
+    // Apvienot failus
+    const allUploaded = {};
+    for (const f of uploadedFiles) allUploaded[f.path] = { hash: '', txId: f.txId, size: f.size };
+    for (const [fp, info] of Object.entries(unchanged)) allUploaded[fp] = info;
+
+    // Merkle root
+    const allFiles = { ...unchanged, ...allUploaded };
+    const { root: merkleRoot } = createMerkleTree(allFiles);
+    console.log(`Merkle root: ${merkleRoot}`);
+
+    // Lokala manifesta kopija
+    if (manifestTxId) {
+        const manifest = {
+            manifest: 'arweave/paths', version: '0.2.0',
+            index: { path: 'README.md' }, paths: {},
+            metadata: { repo: repoName, timestamp: new Date().toISOString(), generatedBy: 'PermRepo v1.0.0' }
+        };
+        for (const [fp, info] of Object.entries(allUploaded)) manifest.paths[fp] = { id: info.txId };
+        
+        const backupDir = path.join(repoPath, CONFIG.PERMAREPO_DIR, CONFIG.BACKUPS_DIR);
+        if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        fs.writeFileSync(path.join(backupDir, `manifest-${ts}.json`), JSON.stringify(manifest, null, 2));
+    }
+
+    // Lock fails
+    saveLock(repoPath, unchanged, allUploaded);
+    if (deleted.length > 0) console.log(`Dzestie faili: ${deleted.join(', ')}`);
+
+    const totalSize = Object.values(allUploaded).reduce((s, f) => s + f.size, 0);
+    
+    console.log('=======================================================');
+    console.log('BACKUPS VEIKSMIGS!');
+    console.log(`Faili: ${Object.keys(allUploaded).length}`);
+    console.log(`Izmers: ${(totalSize / 1024).toFixed(1)} KB`);
+    console.log(`Merkle: ${merkleRoot}`);
+    if (manifestTxId) console.log(`Manifests: ar://${manifestTxId}`);
+    console.log('=======================================================');
+
+    return {
+        status: 'success', manifestTxId, merkleRoot,
+        filesChanged: Object.keys(allUploaded).length, totalSize, tokenId: tokenId.toString()
+    };
 }
 
 function loadLock(repoPath) {
