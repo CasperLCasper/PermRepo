@@ -93,12 +93,8 @@ async function uploadWithMetaMask() {
         button.textContent = 'Savienojas ar MetaMask...';
         setStatus('2/4: Savienojas ar MetaMask...');
 
-        const { WebTurboFactory, EthereumSigner } = await import(
-            'https://cdn.jsdelivr.net/npm/@ardrive/turbo-sdk@1.8.0/+esm'
-        );
-        const { ethers } = await import(
-            'https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.min.js'
-        );
+        const { WebTurboFactory, EthereumSigner } = await import('https://esm.sh/@ardrive/turbo-sdk@1.8.0');
+        const { ethers } = await import('https://esm.sh/ethers@6.7.0');
 
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
