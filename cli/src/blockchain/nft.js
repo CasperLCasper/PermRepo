@@ -13,9 +13,41 @@ const NFT_ABI = [
 
 async function getExistingNFT(provider, nftAddress, repoHash) {
     const address = nftAddress || CONFIG.NFT_ADDRESS;
-    if (!address) throw new Error('Nav norādīta NFT līguma adrese');
+    if (!address) throw new Error('Nav noradita NFT liguma adrese');
     const contract = new ethers.Contract(address, NFT_ABI, provider);
     return await contract.repositoryTokens(repoHash);
 }
 
-module.exports = { getExistingNFT };
+async function getNFTBackupCount(provider, nftAddress, tokenId) {
+    const address = nftAddress || CONFIG.NFT_ADDRESS;
+    const contract = new ethers.Contract(address, NFT_ABI, provider);
+    return await contract.backupCount(tokenId);
+}
+
+async function addBackup({ provider, nftAddress, tokenId, manifestHash, merkleRoot, manifestURI, deadline, signature }) {
+    const address = nftAddress || CONFIG.NFT_ADDRESS;
+    if (!address) throw new Error('Nav noradita NFT liguma adrese');
+    
+    const contract = new ethers.Contract(address, NFT_ABI, provider);
+    
+    console.log(`Ieraksta backupu blockchain (tokenId: ${tokenId})...`);
+    const tx = await contract.addBackup(tokenId, manifestHash, merkleRoot, manifestURI, deadline, signature);
+    console.log(`Gaida transakcijas apstiprinajumu: ${tx.hash}`);
+    const receipt = await tx.wait();
+    console.log(`Transakcija apstiprinata bloka: ${receipt.blockNumber}`);
+    
+    return { tx, receipt };
+}
+
+async function getNFTNonce(provider, nftAddress, tokenId) {
+    const address = nftAddress || CONFIG.NFT_ADDRESS;
+    const contract = new ethers.Contract(address, NFT_ABI, provider);
+    return await contract.getNonce(tokenId);
+}
+
+module.exports = { 
+    getExistingNFT, 
+    getNFTBackupCount, 
+    addBackup, 
+    getNFTNonce 
+};
