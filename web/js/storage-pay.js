@@ -1,6 +1,6 @@
 // ============================================
 // PERMAREPO GLABASANAS APMAKSAS LAPA
-// TurboFactory + MetaMask + failu augsupielade
+// TurboFactory + MetaMask adapteris + failu augsupielade
 // ============================================
 
 const CHAIN_ID = '0x14a34';
@@ -91,19 +91,37 @@ async function uploadWithMetaMask() {
         }
 
         button.textContent = 'Savienojas ar MetaMask...';
-        setStatus('2/4: Savienojas ar MetaMask...');
+        setStatus('2/4: Inicialize MetaMask parakstitaju...');
 
-        const { TurboFactory, EthereumSigner } = await import('https://esm.sh/@ardrive/turbo-sdk@1.8.0');
-        const { ethers } = await import('https://esm.sh/ethers@6.7.0');
+        const { TurboFactory } = await import('https://esm.sh/@ardrive/turbo-sdk@1.8.0');
+        const { ethers } = await import('https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.min.js');
 
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
         const userAddress = await signer.getAddress();
 
+        // Izveidojam MetaMask adapteri
+        const authMsg = "PermRepo Wallet Auth";
+        const dummySig = await signer.signMessage(authMsg);
+        const msgHash = ethers.hashMessage(authMsg);
+        const pubKeyHex = ethers.SigningKey.recoverPublicKey(msgHash, dummySig);
+        const pubKeyBytes = ethers.getBytes(pubKeyHex);
+        const rawPublicKey = pubKeyBytes.length === 65 ? pubKeyBytes.slice(1) : pubKeyBytes;
+
+        const metaMaskTurboSigner = {
+            publicKey: rawPublicKey,
+            signatureType: 3,
+            signatureLength: 65,
+            sign: async (message) => {
+                const sigHex = await signer.signMessage(message);
+                return ethers.getBytes(sigHex);
+            }
+        };
+
         const selectedCurrency = document.getElementById('currencySelect').value;
 
         const turbo = TurboFactory.authenticated({
-            signer: new EthereumSigner(signer),
+            signer: metaMaskTurboSigner,
             token: selectedCurrency,
             uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' },
             paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
