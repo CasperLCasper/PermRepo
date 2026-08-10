@@ -1,6 +1,6 @@
 // ============================================
 // PERMAREPO GLABASANAS APMAKSAS LAPA
-// WebTurboFactory + MetaMask + failu augsupielade
+// TurboFactory + MetaMask + failu augsupielade
 // ============================================
 
 const CHAIN_ID = '0x14a34';
@@ -93,16 +93,18 @@ async function uploadWithMetaMask() {
         button.textContent = 'Savienojas ar MetaMask...';
         setStatus('2/4: Savienojas ar MetaMask...');
 
-        const { WebTurboFactory, EthereumSigner } = await import('https://esm.sh/@ardrive/turbo-sdk@1.8.0');
+        const { TurboFactory, EthereumSigner } = await import('https://esm.sh/@ardrive/turbo-sdk@1.8.0');
         const { ethers } = await import('https://esm.sh/ethers@6.7.0');
 
         const provider = new ethers.BrowserProvider(window.ethereum);
         const signer = await provider.getSigner();
         const userAddress = await signer.getAddress();
 
-        const turbo = WebTurboFactory.authenticated({
+        const selectedCurrency = document.getElementById('currencySelect').value;
+
+        const turbo = TurboFactory.authenticated({
             signer: new EthereumSigner(signer),
-            token: 'base-eth',
+            token: selectedCurrency,
             uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' },
             paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
         });
