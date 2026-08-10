@@ -1,6 +1,6 @@
 // ============================================
 // PERMAREPO GLABASANAS APMAKSAS LAPA
-// Tikai paraksts autorizacijai
+// WebTurboFactory + MetaMask + failu augsupielade
 // ============================================
 
 const CHAIN_ID = '0x14a34';
@@ -9,7 +9,6 @@ const params = new URLSearchParams(window.location.search);
 const repoFromUrl = params.get('repo') || '';
 const filesParam = params.get('files') || '';
 
-let signer, userAddress;
 let filesToUpload = [];
 
 async function init() {
@@ -38,22 +37,18 @@ async function init() {
             params: [{ chainId: CHAIN_ID }] 
         });
         
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        signer = await provider.getSigner();
-        userAddress = await signer.getAddress();
-        
         const button = document.getElementById('payButton');
         button.disabled = false;
-        button.textContent = 'Parakstit un autorizet backupu';
-        button.onclick = signAndRedirect;
+        button.textContent = 'Maksat ar MetaMask un Augsupieladet';
+        button.onclick = uploadWithMetaMask;
         
-        setStatus('Gatavs parakstisanai');
+        setStatus('Gatavs augsupieladei');
     } catch (e) {
         showError('Kluda: ' + e.message);
     }
 }
 
-async function signAndRedirect() {
+async function uploadWithMetaMask() {
     let repo = document.getElementById('repoInput').value.trim();
     repo = repo.replace(/^https?:\/\/permrepo\.pages\.dev\//, '');
     repo = repo.replace(/^https?:\/\/.+\//, '');
@@ -62,45 +57,145 @@ async function signAndRedirect() {
         showError('Ludzu, ievadi repozitorija nosaukumu (piem., lietotajs/repo)');
         return;
     }
-    
+
+    if (filesToUpload.length === 0) {
+        showError('Nav failu augsupieladei');
+        return;
+    }
+
+    const button = document.getElementById('payButton');
+    button.disabled = true;
+
     try {
-        const button = document.getElementById('payButton');
-        button.disabled = true;
-        button.textContent = 'Paraksti ar maku...';
-        setStatus('Paraksti ar MetaMask...');
-        
+        // Dinamiski ieladejam CDN moduli
+        const { WebTurboFactory, EthereumSigner } = await import('https://unpkg.com/@ardrive/turbo-sdk@latest');
+        const { ethers } = await import('https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.min.js');
+
+        button.textContent = 'Lejupielade failus...';
+        setStatus('1/4: Lejupielade failus no GitHub...');
+
+        // Lejupielade failus no GitHub Raw
+        for (let i = 0; i < filesToUpload.length; i++) {
+            const file = filesToUpload[i];
+            try {
+                const rawUrl = `https://raw.githubusercontent.com/${repo}/main/${file.path}`;
+                const response = await fetch(rawUrl);
+                if (response.ok) {
+                    file.content = await response.text();
+                }
+            } catch (e) {
+                console.warn('Nevar lejupieladet:', file.path);
+            }
+        }
+
+        const filesWithContent = filesToUpload.filter(f => f.content);
+        if (filesWithContent.length === 0) {
+            showError('Neizdevas lejupieladet nevienu failu. Pārbaudi GitHub Raw piekluvi.');
+            button.disabled = false;
+            return;
+        }
+
+        // Savienojamies ar MetaMask
+        button.textContent = 'Savienojas ar MetaMask...';
+        setStatus('2/4: Savienojas ar MetaMask...');
+
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+        const userAddress = await signer.getAddress();
+
+        // Inicializejam Turbo ar MetaMask signer
+        const turbo = WebTurboFactory.authenticated({
+            signer: new EthereumSigner(signer),
+            token: 'base-eth',
+            uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' },
+            paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
+        });
+
+        // Augsupielade failus
+        let uploadResults = [];
+        for (let i = 0; i < filesWithContent.length; i++) {
+            const file = filesWithContent[i];
+            button.textContent = `Augsupielade ${i + 1}/${filesWithContent.length}...`;
+            setStatus(`3/4: Ludzu, apstipriniet darijumu MetaMask... (${i + 1}/${filesWithContent.length})`);
+
+            const fileData = new TextEncoder().encode(file.content);
+            const result = await turbo.upload({
+                data: fileData,
+                dataItemOpts: {
+                    tags: [
+                        { name: 'App-Name', value: 'PermRepo' },
+                        { name: 'Repo', value: repo },
+                        { name: 'File-Path', value: file.path },
+                        { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                    ]
+                }
+            });
+
+            uploadResults.push({ path: file.path, txId: result.id, size: fileData.length });
+        }
+
+        // Manifesta augsupielade
+        button.textContent = 'Augsupielade manifestu...';
+        setStatus('4/4: Augsupielade manifestu...');
+
+        const manifest = {
+            manifest: 'arweave/paths', version: '0.2.0',
+            index: { path: 'README.md' }, paths: {},
+            metadata: { repo: repo, timestamp: new Date().toISOString(), generatedBy: 'PermRepo v1.0.0' }
+        };
+        for (const f of uploadResults) manifest.paths[f.path] = { id: f.txId };
+
+        const manifestData = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
+        const manifestResult = await turbo.upload({
+            data: manifestData,
+            dataItemOpts: {
+                tags: [
+                    { name: 'App-Name', value: 'PermRepo' },
+                    { name: 'Type', value: 'path-manifest' },
+                    { name: 'Repo', value: repo },
+                    { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
+                    { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                ]
+            }
+        });
+
+        const manifestTxId = manifestResult.id;
+
+        // Izveidojam Issue ar rezultatiem
+        setStatus('Izveido Issue...');
+
         const timestamp = Math.floor(Date.now() / 1000);
         const message = [
             'PermRepo Backup Authorization',
             `Repository: ${repo}`,
             `Timestamp: ${timestamp}`,
             `Address: ${userAddress}`,
-            `Files: ${filesToUpload.length}`
+            `UploadedFiles: ${uploadResults.length}`,
+            `ManifestTxId: ${manifestTxId}`
         ].join('\n');
-        
+
         const signature = await signer.signMessage(message);
-        
         const payload = {
-            address: userAddress,
-            signature: signature,
-            message: message,
-            timestamp: timestamp
+            address: userAddress, signature, message, timestamp,
+            uploadedFiles: uploadResults, manifestTxId
         };
-        
+
         const jsonBody = JSON.stringify(payload, null, 2);
         const body = '```json\n' + jsonBody + '\n```';
         const issueTitle = `[PermRepo Backup] ${userAddress.substring(0, 10)}...`;
         const issueUrl = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(issueTitle)}&body=${encodeURIComponent(body)}`;
-        
-        setStatus('Paraksts veiksmigs! Novirzam uz GitHub...');
+
+        setStatus('Gatavs! Novirzam uz GitHub...');
         window.location.href = issueUrl;
-        
+
     } catch (e) {
-        if (e.code === 'ACTION_REJECTED') showError('Parakstisana atcelta');
-        else showError('Kluda: ' + e.message);
-        const button = document.getElementById('payButton');
+        if (e.code === 'ACTION_REJECTED') {
+            showError('Transakcija atcelta');
+        } else {
+            showError('Kluda: ' + e.message);
+        }
         button.disabled = false;
-        button.textContent = 'Parakstit un autorizet backupu';
+        button.textContent = 'Maksat ar MetaMask un Augsupieladet';
     }
 }
 
