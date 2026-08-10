@@ -3,7 +3,7 @@
 // TurboFactory + MetaMask adapteris + uploadFile
 // ============================================
 
-const CHAIN_ID = '0x14a34';
+const CHAIN_ID = '0x14a34'; // Base Sepolia vai atbilstošais tīkls
 
 const params = new URLSearchParams(window.location.search);
 const repoFromUrl = params.get('repo') || '';
@@ -109,6 +109,7 @@ async function uploadWithMetaMask() {
 
         const metaMaskTurboSigner = {
             publicKey: rawPublicKey,
+            getPublicKey: () => rawPublicKey, // KĻŪDAS LABOJUMS: SDK pieprasa šo funkciju
             signatureType: 3,
             signatureLength: 65,
             sign: async (message) => {
@@ -133,16 +134,20 @@ async function uploadWithMetaMask() {
             setStatus(`3/4: Apstiprini MetaMask... (${i + 1}/${filesWithContent.length})`);
 
             const fileData = new TextEncoder().encode(file.content);
+            
+            // KĻŪDAS LABOJUMS: Izmantojam Factory funkcijas un dataItemOpts
             const result = await turbo.uploadFile({
-                fileStream: fileData,
-                dataSize: fileData.byteLength,
-                tags: [
-                    { name: 'App-Name', value: 'PermRepo' },
-                    { name: 'Repo', value: repo },
-                    { name: 'File-Path', value: file.path },
-                    { name: 'Content-Type', value: 'application/octet-stream' },
-                    { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
-                ]
+                fileStreamFactory: () => new Blob([fileData]).stream(),
+                fileSizeFactory: () => fileData.byteLength,
+                dataItemOpts: {
+                    tags: [
+                        { name: 'App-Name', value: 'PermRepo' },
+                        { name: 'Repo', value: repo },
+                        { name: 'File-Path', value: file.path },
+                        { name: 'Content-Type', value: 'application/octet-stream' },
+                        { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                    ]
+                }
             });
 
             uploadResults.push({ path: file.path, txId: result.id, size: fileData.byteLength });
@@ -159,16 +164,20 @@ async function uploadWithMetaMask() {
         for (const f of uploadResults) manifest.paths[f.path] = { id: f.txId };
 
         const manifestData = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
+        
+        // KĻŪDAS LABOJUMS: Izmantojam Factory funkcijas un dataItemOpts manifestam
         const manifestResult = await turbo.uploadFile({
-            fileStream: manifestData,
-            dataSize: manifestData.byteLength,
-            tags: [
-                { name: 'App-Name', value: 'PermRepo' },
-                { name: 'Type', value: 'path-manifest' },
-                { name: 'Repo', value: repo },
-                { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
-                { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
-            ]
+            fileStreamFactory: () => new Blob([manifestData]).stream(),
+            fileSizeFactory: () => manifestData.byteLength,
+            dataItemOpts: {
+                tags: [
+                    { name: 'App-Name', value: 'PermRepo' },
+                    { name: 'Type', value: 'path-manifest' },
+                    { name: 'Repo', value: repo },
+                    { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
+                    { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                ]
+            }
         });
 
         const manifestTxId = manifestResult.id;
