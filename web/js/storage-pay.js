@@ -3,7 +3,7 @@
 // TurboFactory + MetaMask adapteris + uploadFile
 // ============================================
 
-const CHAIN_ID = '0x14a34'; // Base Sepolia vai atbilstošais tīkls
+const CHAIN_ID = '0x14a34'; // Base Sepolia (vai cita atbilstošā ķēde)
 
 const params = new URLSearchParams(window.location.search);
 const repoFromUrl = params.get('repo') || '';
@@ -100,18 +100,26 @@ async function uploadWithMetaMask() {
         const signer = await provider.getSigner();
         const userAddress = await signer.getAddress();
 
+        // 1. Dabonam publisko atslēgu no MetaMask paraksta
         const authMsg = "PermRepo Wallet Auth";
         const dummySig = await signer.signMessage(authMsg);
         const msgHash = ethers.hashMessage(authMsg);
         const pubKeyHex = ethers.SigningKey.recoverPublicKey(msgHash, dummySig);
         const pubKeyBytes = ethers.getBytes(pubKeyHex);
-        const rawPublicKey = pubKeyBytes.length === 65 ? pubKeyBytes.slice(1) : pubKeyBytes;
+        
+        // Pārliecināmies, ka atslēga ir tieši 64 baiti (bez 0x04 prefiksa sākumā)
+        const rawPublicKey = (pubKeyBytes.length === 65 && pubKeyBytes[0] === 4)
+            ? pubKeyBytes.slice(1)
+            : pubKeyBytes;
 
+        // 2. Pilns MetaMask adapteris priekš Turbo SDK un arbundles
         const metaMaskTurboSigner = {
             publicKey: rawPublicKey,
-            getPublicKey: () => rawPublicKey, // KĻŪDAS LABOJUMS: SDK pieprasa šo funkciju
-            signatureType: 3,
-            signatureLength: 65,
+            owner: rawPublicKey,             // Nepieciešams arbundles pakotnei
+            getPublicKey: () => rawPublicKey, // Nepieciešams Turbo SDK
+            signatureType: 3,                // Ethereum paraksta tips
+            signatureLength: 65,             // Paraksta garums baitos
+            ownerLength: 64,                 // Novērš "offset is out of bounds" kļūdu
             sign: async (message) => {
                 const sigHex = await signer.signMessage(message);
                 return ethers.getBytes(sigHex);
@@ -135,7 +143,6 @@ async function uploadWithMetaMask() {
 
             const fileData = new TextEncoder().encode(file.content);
             
-            // KĻŪDAS LABOJUMS: Izmantojam Factory funkcijas un dataItemOpts
             const result = await turbo.uploadFile({
                 fileStreamFactory: () => new Blob([fileData]).stream(),
                 fileSizeFactory: () => fileData.byteLength,
@@ -157,15 +164,16 @@ async function uploadWithMetaMask() {
         setStatus('4/4: Augsupielade manifestu...');
 
         const manifest = {
-            manifest: 'arweave/paths', version: '0.2.0',
-            index: { path: 'README.md' }, paths: {},
+            manifest: 'arweave/paths', 
+            version: '0.2.0',
+            index: { path: 'README.md' }, 
+            paths: {},
             metadata: { repo, timestamp: new Date().toISOString(), generatedBy: 'PermRepo v1.0.0' }
         };
         for (const f of uploadResults) manifest.paths[f.path] = { id: f.txId };
 
         const manifestData = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
         
-        // KĻŪDAS LABOJUMS: Izmantojam Factory funkcijas un dataItemOpts manifestam
         const manifestResult = await turbo.uploadFile({
             fileStreamFactory: () => new Blob([manifestData]).stream(),
             fileSizeFactory: () => manifestData.byteLength,
