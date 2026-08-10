@@ -1,6 +1,6 @@
 // ============================================
 // PERMAREPO GLABASANAS APMAKSAS LAPA
-// TurboFactory + MetaMask adapteris + failu augsupielade
+// TurboFactory + MetaMask adapteris + uploadFile
 // ============================================
 
 const CHAIN_ID = '0x14a34';
@@ -100,7 +100,6 @@ async function uploadWithMetaMask() {
         const signer = await provider.getSigner();
         const userAddress = await signer.getAddress();
 
-        // Izveidojam MetaMask adapteri
         const authMsg = "PermRepo Wallet Auth";
         const dummySig = await signer.signMessage(authMsg);
         const msgHash = ethers.hashMessage(authMsg);
@@ -134,19 +133,19 @@ async function uploadWithMetaMask() {
             setStatus(`3/4: Apstiprini MetaMask... (${i + 1}/${filesWithContent.length})`);
 
             const fileData = new TextEncoder().encode(file.content);
-            const result = await turbo.upload({
-                data: fileData,
-                dataItemOpts: {
-                    tags: [
-                        { name: 'App-Name', value: 'PermRepo' },
-                        { name: 'Repo', value: repo },
-                        { name: 'File-Path', value: file.path },
-                        { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
-                    ]
-                }
+            const result = await turbo.uploadFile({
+                fileStream: fileData,
+                dataSize: fileData.byteLength,
+                tags: [
+                    { name: 'App-Name', value: 'PermRepo' },
+                    { name: 'Repo', value: repo },
+                    { name: 'File-Path', value: file.path },
+                    { name: 'Content-Type', value: 'application/octet-stream' },
+                    { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                ]
             });
 
-            uploadResults.push({ path: file.path, txId: result.id, size: fileData.length });
+            uploadResults.push({ path: file.path, txId: result.id, size: fileData.byteLength });
         }
 
         button.textContent = 'Augsupielade manifestu...';
@@ -160,17 +159,16 @@ async function uploadWithMetaMask() {
         for (const f of uploadResults) manifest.paths[f.path] = { id: f.txId };
 
         const manifestData = new TextEncoder().encode(JSON.stringify(manifest, null, 2));
-        const manifestResult = await turbo.upload({
-            data: manifestData,
-            dataItemOpts: {
-                tags: [
-                    { name: 'App-Name', value: 'PermRepo' },
-                    { name: 'Type', value: 'path-manifest' },
-                    { name: 'Repo', value: repo },
-                    { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
-                    { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
-                ]
-            }
+        const manifestResult = await turbo.uploadFile({
+            fileStream: manifestData,
+            dataSize: manifestData.byteLength,
+            tags: [
+                { name: 'App-Name', value: 'PermRepo' },
+                { name: 'Type', value: 'path-manifest' },
+                { name: 'Repo', value: repo },
+                { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
+                { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+            ]
         });
 
         const manifestTxId = manifestResult.id;
