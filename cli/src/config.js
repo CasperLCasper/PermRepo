@@ -27,7 +27,7 @@ const CONFIG = {
     // ==========================================
     // WEB URL
     // ==========================================
-    WEB_URL: 'https://permrepo-topup-3.onrender.com',
+    WEB_URL: 'https://permrepo-topup-4.onrender.com',
     NFT_PAGE: '/nft.html',
     SUBSCRIBE_PAGE: '/subscribe.html',
     STORAGE_PAY_PAGE: '/storage-pay.html',
