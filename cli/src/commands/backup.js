@@ -74,10 +74,11 @@ async function backup(opts) {
         const filesList = Object.entries(changed).map(([filePath, info]) => ({
             path: filePath, size: info.size
         }));
-        const filesParam = encodeURIComponent(JSON.stringify(filesList));
         
-        // Aprēķinām aptuvenās izmaksas
-        const estimatedCostWei = totalChangedSize * 1000; // Aptuveni 1000 wei par baitu
+        // Aprēķinām aptuvenās izmaksas: 1 MB ≈ 0.001 ETH
+        const estimatedCostWei = ethers.parseEther(
+            (totalChangedSize / 1024 / 1024 * 0.001).toFixed(6)
+        );
         const estimatedCostEth = ethers.formatEther(estimatedCostWei);
         
         console.log('Nepieciesams apmaksat glabasanu.');
@@ -138,7 +139,9 @@ async function backup(opts) {
             console.log(`Operators: ${operatorWallet.address}`);
             
             // 2. Aprēķinām glabāšanas izmaksas
-            const estimatedCostWei = totalChangedSize * 1000;
+            const estimatedCostWei = ethers.parseEther(
+                (totalChangedSize / 1024 / 1024 * 0.001).toFixed(6)
+            );
             
             // 3. Pārbaudām Treasury bilanci
             const treasuryContract = new ethers.Contract(CONFIG.TREASURY_ADDRESS, TREASURY_ABI, provider);
