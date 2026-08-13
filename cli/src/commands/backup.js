@@ -6,10 +6,16 @@ const { scanFiles, compareWithLock, saveLock, getRepoName } = require('../git/sc
 const { createMerkleTree } = require('../merkle/tree');
 const { getExistingNFT } = require('../blockchain/nft');
 const { checkSubscription } = require('../blockchain/subscription');
+const { TurboFactory, EthereumSigner } = require('@ardrive/turbo-sdk');
 
 function getRepoHash(repoName) {
     return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [repoName]));
 }
+
+const TREASURY_ABI = [
+    "function payTurbo(uint256 amount, bytes32 paymentId) external",
+    "function balance() external view returns (uint256)"
+];
 
 async function backup(opts) {
     const walletAddress = opts.wallet || CONFIG.WALLET_ADDRESS;
@@ -62,15 +68,25 @@ async function backup(opts) {
     const issueBody = process.env.ISSUE_BODY;
     
     if (!issueBody) {
+        // ==========================================
+        // APRĒĶINĀT IZMAKSAS UN IZVADĪT INSTRUKCIJAS
+        // ==========================================
         const filesList = Object.entries(changed).map(([filePath, info]) => ({
             path: filePath, size: info.size
         }));
         const filesParam = encodeURIComponent(JSON.stringify(filesList));
         
-        console.log('Nepieciesams augsupieladet failus.');
+        // Aprēķinām aptuvenās izmaksas
+        const estimatedCostWei = totalChangedSize * 1000; // Aptuveni 1000 wei par baitu
+        const estimatedCostEth = ethers.formatEther(estimatedCostWei);
+        
+        console.log('Nepieciesams apmaksat glabasanu.');
         console.log(`Failu skaits: ${filesList.length}`);
         console.log(`Kopejais izmers: ${(totalChangedSize / 1024).toFixed(1)} KB`);
-        console.log(`Augsupieladet: ${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}&files=${filesParam}`);
+        console.log(`Aptuvenas izmaksas: ${estimatedCostEth} ETH`);
+        console.log(`Iemaksa Treasury liguma adrese: ${CONFIG.TREASURY_ADDRESS}`);
+        console.log(`Iemaksas summa: ${estimatedCostEth} ETH`);
+        console.log('Pec iemaksas izveido jaunu Issue ar GitHub, lai turpinatu backupu.');
         return;
     }
 
@@ -107,6 +123,110 @@ async function backup(opts) {
         console.log('Kluda verificejot parakstu:', e.message); return;
     }
 
+    // ==========================================
+    // JA NAV FAILU NO PĀRLŪKA — AUGŠUPIELĀDĒJAM NO CLI
+    // ==========================================
+    if (uploadedFiles.length === 0 && Object.keys(changed).length > 0) {
+        try {
+            const operatorPrivateKey = process.env.OPERATOR_PRIVATE_KEY;
+            if (!operatorPrivateKey) {
+                throw new Error('OPERATOR_PRIVATE_KEY nav iestatits GitHub Secretos');
+            }
+            
+            // 1. Izveidojam operatora maku
+            const operatorWallet = new ethers.Wallet(operatorPrivateKey, provider);
+            console.log(`Operators: ${operatorWallet.address}`);
+            
+            // 2. Aprēķinām glabāšanas izmaksas
+            const estimatedCostWei = totalChangedSize * 1000;
+            
+            // 3. Pārbaudām Treasury bilanci
+            const treasuryContract = new ethers.Contract(CONFIG.TREASURY_ADDRESS, TREASURY_ABI, provider);
+            const treasuryBalance = await treasuryContract.balance();
+            console.log(`Treasury balance: ${ethers.formatEther(treasuryBalance)} ETH`);
+            
+            if (treasuryBalance < estimatedCostWei) {
+                throw new Error('Treasury nav pietiekami lidzeklu. Ludzu iemaksajiet ETH.');
+            }
+            
+            // 4. Izsaucam payTurbo() no Treasury
+            const paymentId = ethers.id(repoName + Date.now().toString());
+            console.log('Apmaksajam glabasanu caur Treasury...');
+            
+            const treasuryWriteContract = new ethers.Contract(CONFIG.TREASURY_ADDRESS, TREASURY_ABI, operatorWallet);
+            const payTx = await treasuryWriteContract.payTurbo(estimatedCostWei, paymentId);
+            await payTx.wait();
+            console.log('Turbo apmaksa veikta no Treasury');
+            
+            // 5. Pērkam kredītus ar operatora maku
+            const turboSigner = new EthereumSigner(operatorPrivateKey);
+            const turbo = TurboFactory.authenticated({
+                signer: turboSigner,
+                token: 'base-eth',
+                uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' },
+                paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
+            });
+            
+            await turbo.topUpWithTokens({
+                tokenAmount: estimatedCostWei.toString()
+            });
+            console.log('Krediti nopirkti');
+            
+            // 6. Augšupielādējam failus
+            console.log('Augsupielade failus...');
+            for (const [filePath, info] of Object.entries(changed)) {
+                const fullPath = path.join(repoPath, filePath);
+                const fileData = fs.readFileSync(fullPath);
+                
+                const result = await turbo.uploadFile({
+                    fileStreamFactory: () => fileData,
+                    fileSizeFactory: () => fileData.length,
+                    dataItemOpts: {
+                        tags: [
+                            { name: 'App-Name', value: 'PermRepo' },
+                            { name: 'Repo', value: repoName },
+                            { name: 'File-Path', value: filePath },
+                            { name: 'Content-Type', value: 'text/plain' },
+                            { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                        ]
+                    }
+                });
+                
+                uploadedFiles.push({ path: filePath, txId: result.id, size: info.size });
+                console.log(`Augsupieladets: ${filePath}`);
+            }
+            
+            // 7. Manifest
+            const manifest = {
+                manifest: 'arweave/paths', version: '0.2.0',
+                index: { path: 'README.md' }, paths: {},
+                metadata: { repo: repoName, timestamp: new Date().toISOString(), generatedBy: 'PermRepo v1.0.0' }
+            };
+            for (const f of uploadedFiles) manifest.paths[f.path] = { id: f.txId };
+            
+            const manifestData = Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8');
+            const manifestResult = await turbo.uploadFile({
+                fileStreamFactory: () => manifestData,
+                fileSizeFactory: () => manifestData.length,
+                dataItemOpts: {
+                    tags: [
+                        { name: 'App-Name', value: 'PermRepo' },
+                        { name: 'Type', value: 'path-manifest' },
+                        { name: 'Repo', value: repoName },
+                        { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
+                        { name: 'Unix-Time', value: String(Math.floor(Date.now() / 1000)) }
+                    ]
+                }
+            });
+            manifestTxId = manifestResult.id;
+            console.log(`Manifests: ar://${manifestTxId}`);
+            
+        } catch (cliUploadError) {
+            console.log('CLI augsupielade neizdevas:', cliUploadError.message);
+            return;
+        }
+    }
+
     // Apvienot failus
     const allUploaded = {};
     for (const f of uploadedFiles) allUploaded[f.path] = { hash: '', txId: f.txId, size: f.size };
@@ -136,7 +256,7 @@ async function backup(opts) {
     saveLock(repoPath, unchanged, allUploaded);
     if (deleted.length > 0) console.log(`Dzestie faili: ${deleted.join(', ')}`);
 
-    // === AUTOMATISKI COMMIT LOCK FAILU (tikai GitHub Actions) ===
+    // === AUTOMATISKI COMMIT LOCK FAILU ===
     if (process.env.GITHUB_TOKEN) {
         try {
             const { execSync } = require('node:child_process');
