@@ -12,6 +12,8 @@ function getRepoHash(repoName) {
     return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(['string'], [repoName]));
 }
 
+const TREASURY_ADDRESS = process.env.TREASURY_ADDRESS || CONFIG.TREASURY_ADDRESS;
+
 const TREASURY_ABI = [
     "function payTurbo(uint256 amount, bytes32 paymentId) external",
     "function balance() external view returns (uint256)"
@@ -79,7 +81,6 @@ async function backup(opts) {
         }
         
         try {
-            // Izveidojam Turbo klientu precīzai cenas aprēķināšanai
             const turboSigner = new EthereumSigner(operatorPrivateKey);
             const turbo = TurboFactory.authenticated({
                 signer: turboSigner,
@@ -88,7 +89,6 @@ async function backup(opts) {
                 paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
             });
             
-            // Iegūstam precīzu cenu
             const costs = await turbo.getUploadCosts({ bytes: totalChangedSize });
             const costInfo = costs[0];
             
@@ -99,7 +99,6 @@ async function backup(opts) {
             const actualCostWei = ethers.parseEther(costInfo.tokenAmount.toString());
             const actualCostEth = ethers.formatEther(actualCostWei);
             
-            // Apmaksas saite uz storage-pay.html
             const paymentUrl = `${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}&amount=${actualCostEth}`;
             
             console.log('Nepieciesams apmaksat glabasanu.');
@@ -111,7 +110,6 @@ async function backup(opts) {
             
         } catch (e) {
             console.warn('Neizdevas iegut precizu cenu:', e.message);
-            // Fallback uz aptuvenu aprēķinu
             const estimatedCostEth = (totalChangedSize / 1024 / 1024 * 0.00001).toFixed(8);
             const paymentUrl = `${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}&amount=${estimatedCostEth}`;
             console.log('Aptuvenas izmaksas:', estimatedCostEth, 'ETH');
@@ -167,7 +165,6 @@ async function backup(opts) {
             const operatorWallet = new ethers.Wallet(operatorPrivateKey, provider);
             console.log(`Operators: ${operatorWallet.address}`);
             
-            // Izveidojam Turbo klientu
             const turboSigner = new EthereumSigner(operatorPrivateKey);
             const turbo = TurboFactory.authenticated({
                 signer: turboSigner,
@@ -176,13 +173,11 @@ async function backup(opts) {
                 paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
             });
             
-            // Iegūstam precīzu cenu
             const costs = await turbo.getUploadCosts({ bytes: totalChangedSize });
             const costInfo = costs[0];
             const actualCostWei = ethers.parseEther(costInfo.tokenAmount.toString());
             
-            // Pārbaudām Treasury bilanci
-            const treasuryContract = new ethers.Contract(CONFIG.TREASURY_ADDRESS, TREASURY_ABI, provider);
+            const treasuryContract = new ethers.Contract(TREASURY_ADDRESS, TREASURY_ABI, provider);
             const treasuryBalance = await treasuryContract.balance();
             console.log(`Treasury balance: ${ethers.formatEther(treasuryBalance)} ETH`);
             
@@ -190,22 +185,19 @@ async function backup(opts) {
                 throw new Error('Treasury nav pietiekami lidzeklu.');
             }
             
-            // Izsaucam payTurbo() no Treasury
             const paymentId = ethers.id(repoName + Date.now().toString());
             console.log('Apmaksajam glabasanu caur Treasury...');
             
-            const treasuryWriteContract = new ethers.Contract(CONFIG.TREASURY_ADDRESS, TREASURY_ABI, operatorWallet);
+            const treasuryWriteContract = new ethers.Contract(TREASURY_ADDRESS, TREASURY_ABI, operatorWallet);
             const payTx = await treasuryWriteContract.payTurbo(actualCostWei, paymentId);
             await payTx.wait();
             console.log('Turbo apmaksa veikta no Treasury');
             
-            // Pērkam kredītus
             await turbo.topUpWithTokens({
                 tokenAmount: costInfo.tokenAmount.toString()
             });
             console.log('Krediti nopirkti');
             
-            // Augšupielādējam failus
             console.log('Augsupielade failus...');
             for (const [filePath, info] of Object.entries(changed)) {
                 const fullPath = path.join(repoPath, filePath);
@@ -229,7 +221,6 @@ async function backup(opts) {
                 console.log(`Augsupieladets: ${filePath}`);
             }
             
-            // Manifest
             const manifest = {
                 manifest: 'arweave/paths', version: '0.2.0',
                 index: { path: 'README.md' }, paths: {},
