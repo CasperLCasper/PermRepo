@@ -24,12 +24,5 @@ jobs:
           ISSUE_BODY: ${{ github.event.issue.body }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           WALLET_ADDRESS: ${{ secrets.WALLET_ADDRESS }}
-          RPC_URL: ${{ secrets.RPC_URL }}
-          SUBSCRIPTION_ADDRESS: ${{ secrets.SUBSCRIPTION_ADDRESS }}
-          NFT_ADDRESS: ${{ secrets.NFT_ADDRESS }}
-          REGISTRY_ADDRESS: ${{ secrets.REGISTRY_ADDRESS }}
-          TURBO_UPLOAD_URL: ${{ secrets.TURBO_UPLOAD_URL }}
-          TURBO_PAYMENT_URL: ${{ secrets.TURBO_PAYMENT_URL }}
-          ARWEAVE_WALLET: ${{ secrets.ARWEAVE_WALLET }}
-          WEB_URL: ${{ secrets.WEB_URL }}
+          OPERATOR_PRIVATE_KEY: ${{ secrets.OPERATOR_PRIVATE_KEY }}
         run: node action/src/index.js
