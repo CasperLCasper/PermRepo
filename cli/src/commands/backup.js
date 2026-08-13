@@ -69,7 +69,7 @@ async function backup(opts) {
     
     if (!issueBody) {
         // ==========================================
-        // APRĒĶINĀT IZMAKSAS UN IZVADĪT INSTRUKCIJAS
+        // APRĒĶINĀT IZMAKSAS UN IZVADĪT APMAKSAS SAITI
         // ==========================================
         const filesList = Object.entries(changed).map(([filePath, info]) => ({
             path: filePath, size: info.size
@@ -81,12 +81,15 @@ async function backup(opts) {
         );
         const estimatedCostEth = ethers.formatEther(estimatedCostWei);
         
+        // Tiešā MetaMask saite
+        const paymentUrl = `https://metamask.app.link/send/${CONFIG.TREASURY_ADDRESS}?value=${estimatedCostWei.toString()}`;
+        
         console.log('Nepieciesams apmaksat glabasanu.');
         console.log(`Failu skaits: ${filesList.length}`);
         console.log(`Kopejais izmers: ${(totalChangedSize / 1024).toFixed(1)} KB`);
         console.log(`Aptuvenas izmaksas: ${estimatedCostEth} ETH`);
-        console.log(`Iemaksa Treasury liguma adrese: ${CONFIG.TREASURY_ADDRESS}`);
-        console.log(`Iemaksas summa: ${estimatedCostEth} ETH`);
+        console.log(`Apmaksas saite: ${paymentUrl}`);
+        console.log(`Treasury adrese: ${CONFIG.TREASURY_ADDRESS}`);
         console.log('Pec iemaksas izveido jaunu Issue ar GitHub, lai turpinatu backupu.');
         return;
     }
