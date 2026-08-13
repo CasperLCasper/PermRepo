@@ -69,28 +69,55 @@ async function backup(opts) {
     
     if (!issueBody) {
         // ==========================================
-        // APRĒĶINĀT IZMAKSAS UN IZVADĪT APMAKSAS SAITI
+        // APRĒĶINĀT IZMAKSAS CAUR TURBO API
         // ==========================================
-        const filesList = Object.entries(changed).map(([filePath, info]) => ({
-            path: filePath, size: info.size
-        }));
+        const operatorPrivateKey = process.env.OPERATOR_PRIVATE_KEY;
         
-        // Aprēķinām aptuvenās izmaksas: 1 MB ≈ 0.001 ETH
-        const estimatedCostWei = ethers.parseEther(
-            (totalChangedSize / 1024 / 1024 * 0.001).toFixed(6)
-        );
-        const estimatedCostEth = ethers.formatEther(estimatedCostWei);
+        if (!operatorPrivateKey) {
+            console.log('Nav OPERATOR_PRIVATE_KEY. Izlaizam precizu apmaksu.');
+            return;
+        }
         
-        // Tiešā MetaMask saite
-        const paymentUrl = `https://metamask.app.link/send/${CONFIG.TREASURY_ADDRESS}?value=${estimatedCostWei.toString()}`;
+        try {
+            // Izveidojam Turbo klientu precīzai cenas aprēķināšanai
+            const turboSigner = new EthereumSigner(operatorPrivateKey);
+            const turbo = TurboFactory.authenticated({
+                signer: turboSigner,
+                token: 'base-eth',
+                uploadServiceConfig: { url: 'https://upload.services.ar-io.dev' },
+                paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
+            });
+            
+            // Iegūstam precīzu cenu
+            const costs = await turbo.getUploadCosts({ bytes: totalChangedSize });
+            const costInfo = costs[0];
+            
+            if (!costInfo) {
+                throw new Error('Neizdevas iegut izmaksas no Turbo');
+            }
+            
+            const actualCostWei = ethers.parseEther(costInfo.tokenAmount.toString());
+            const actualCostEth = ethers.formatEther(actualCostWei);
+            
+            // Apmaksas saite uz storage-pay.html
+            const paymentUrl = `${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}&amount=${actualCostEth}`;
+            
+            console.log('Nepieciesams apmaksat glabasanu.');
+            console.log(`Failu skaits: ${Object.keys(changed).length}`);
+            console.log(`Kopejais izmers: ${(totalChangedSize / 1024).toFixed(1)} KB`);
+            console.log(`Precizas izmaksas: ${actualCostEth} ETH`);
+            console.log(`Apmaksas lapa: ${paymentUrl}`);
+            console.log('Pec iemaksas izveido jaunu Issue ar GitHub, lai turpinatu backupu.');
+            
+        } catch (e) {
+            console.warn('Neizdevas iegut precizu cenu:', e.message);
+            // Fallback uz aptuvenu aprēķinu
+            const estimatedCostEth = (totalChangedSize / 1024 / 1024 * 0.00001).toFixed(8);
+            const paymentUrl = `${CONFIG.WEB_URL}${CONFIG.STORAGE_PAY_PAGE}?repo=${encodeURIComponent(repoName)}&amount=${estimatedCostEth}`;
+            console.log('Aptuvenas izmaksas:', estimatedCostEth, 'ETH');
+            console.log('Apmaksas lapa:', paymentUrl);
+        }
         
-        console.log('Nepieciesams apmaksat glabasanu.');
-        console.log(`Failu skaits: ${filesList.length}`);
-        console.log(`Kopejais izmers: ${(totalChangedSize / 1024).toFixed(1)} KB`);
-        console.log(`Aptuvenas izmaksas: ${estimatedCostEth} ETH`);
-        console.log(`Apmaksas saite: ${paymentUrl}`);
-        console.log(`Treasury adrese: ${CONFIG.TREASURY_ADDRESS}`);
-        console.log('Pec iemaksas izveido jaunu Issue ar GitHub, lai turpinatu backupu.');
         return;
     }
 
@@ -137,34 +164,10 @@ async function backup(opts) {
                 throw new Error('OPERATOR_PRIVATE_KEY nav iestatits GitHub Secretos');
             }
             
-            // 1. Izveidojam operatora maku
             const operatorWallet = new ethers.Wallet(operatorPrivateKey, provider);
             console.log(`Operators: ${operatorWallet.address}`);
             
-            // 2. Aprēķinām glabāšanas izmaksas
-            const estimatedCostWei = ethers.parseEther(
-                (totalChangedSize / 1024 / 1024 * 0.001).toFixed(6)
-            );
-            
-            // 3. Pārbaudām Treasury bilanci
-            const treasuryContract = new ethers.Contract(CONFIG.TREASURY_ADDRESS, TREASURY_ABI, provider);
-            const treasuryBalance = await treasuryContract.balance();
-            console.log(`Treasury balance: ${ethers.formatEther(treasuryBalance)} ETH`);
-            
-            if (treasuryBalance < estimatedCostWei) {
-                throw new Error('Treasury nav pietiekami lidzeklu. Ludzu iemaksajiet ETH.');
-            }
-            
-            // 4. Izsaucam payTurbo() no Treasury
-            const paymentId = ethers.id(repoName + Date.now().toString());
-            console.log('Apmaksajam glabasanu caur Treasury...');
-            
-            const treasuryWriteContract = new ethers.Contract(CONFIG.TREASURY_ADDRESS, TREASURY_ABI, operatorWallet);
-            const payTx = await treasuryWriteContract.payTurbo(estimatedCostWei, paymentId);
-            await payTx.wait();
-            console.log('Turbo apmaksa veikta no Treasury');
-            
-            // 5. Pērkam kredītus ar operatora maku
+            // Izveidojam Turbo klientu
             const turboSigner = new EthereumSigner(operatorPrivateKey);
             const turbo = TurboFactory.authenticated({
                 signer: turboSigner,
@@ -173,12 +176,36 @@ async function backup(opts) {
                 paymentServiceConfig: { url: 'https://payment.services.ar-io.dev' }
             });
             
+            // Iegūstam precīzu cenu
+            const costs = await turbo.getUploadCosts({ bytes: totalChangedSize });
+            const costInfo = costs[0];
+            const actualCostWei = ethers.parseEther(costInfo.tokenAmount.toString());
+            
+            // Pārbaudām Treasury bilanci
+            const treasuryContract = new ethers.Contract(CONFIG.TREASURY_ADDRESS, TREASURY_ABI, provider);
+            const treasuryBalance = await treasuryContract.balance();
+            console.log(`Treasury balance: ${ethers.formatEther(treasuryBalance)} ETH`);
+            
+            if (treasuryBalance < actualCostWei) {
+                throw new Error('Treasury nav pietiekami lidzeklu.');
+            }
+            
+            // Izsaucam payTurbo() no Treasury
+            const paymentId = ethers.id(repoName + Date.now().toString());
+            console.log('Apmaksajam glabasanu caur Treasury...');
+            
+            const treasuryWriteContract = new ethers.Contract(CONFIG.TREASURY_ADDRESS, TREASURY_ABI, operatorWallet);
+            const payTx = await treasuryWriteContract.payTurbo(actualCostWei, paymentId);
+            await payTx.wait();
+            console.log('Turbo apmaksa veikta no Treasury');
+            
+            // Pērkam kredītus
             await turbo.topUpWithTokens({
-                tokenAmount: estimatedCostWei.toString()
+                tokenAmount: costInfo.tokenAmount.toString()
             });
             console.log('Krediti nopirkti');
             
-            // 6. Augšupielādējam failus
+            // Augšupielādējam failus
             console.log('Augsupielade failus...');
             for (const [filePath, info] of Object.entries(changed)) {
                 const fullPath = path.join(repoPath, filePath);
@@ -202,7 +229,7 @@ async function backup(opts) {
                 console.log(`Augsupieladets: ${filePath}`);
             }
             
-            // 7. Manifest
+            // Manifest
             const manifest = {
                 manifest: 'arweave/paths', version: '0.2.0',
                 index: { path: 'README.md' }, paths: {},
