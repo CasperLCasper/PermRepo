@@ -25,4 +25,6 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WALLET_ADDRESS: ${{ secrets.WALLET_ADDRESS }}
+          OPERATOR_PRIVATE_KEY: ${{ secrets.OPERATOR_PRIVATE_KEY }}
+          TREASURY_ADDRESS: '0x349c78525Dbb6aCfE60c96546174dC1627028b62'
         run: npx perm-repo backup --repo .
