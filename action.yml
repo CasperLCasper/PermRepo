@@ -12,5 +12,5 @@ outputs:
   status:
     description: 'Backupa statuss'
 runs:
-  using: 'node20'
-  main: 'src/index.js'
+  using: 'node24'
+  main: 'action/src/index.js'
