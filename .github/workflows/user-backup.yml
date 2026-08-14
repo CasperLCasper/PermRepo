@@ -14,22 +14,23 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout
+      - name: Checkout test repo
         uses: actions/checkout@v4
+      
+      - name: Clone PermRepo
+        run: git clone https://github.com/CasperLCasper/Virsburts_PermRepo.git /tmp/permrepo
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '24'
       
-      - name: Install action dependencies
-        run: |
-          git clone https://github.com/CasperLCasper/PermRepo.git /tmp/PermRepo
-          cd /tmp/PermRepo/action
-          npm install
+      - name: Install dependencies
+        working-directory: /tmp/permrepo/action
+        run: npm install
       
-      - name: Run PermRepo Backup
-        working-directory: /tmp/PermRepo/action
+      - name: Run Backup
+        working-directory: /tmp/permrepo/action
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WALLET_ADDRESS: ${{ secrets.WALLET_ADDRESS }}
