@@ -3,7 +3,8 @@ const github = require('@actions/github');
 const { ethers } = require('ethers');
 
 async function run() {
-    const octokit = github.getOctokit(process.env.GITHUB_TOKEN);
+    const githubToken = core.getInput('github_token');
+    const octokit = github.getOctokit(githubToken);
     const issueBody = process.env.ISSUE_BODY;
     const issueNumber = Number.parseInt(process.env.ISSUE_NUMBER, 10);
     const { owner, repo } = github.context.repo;
