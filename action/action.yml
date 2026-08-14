@@ -1,0 +1,16 @@
+name: 'PermRepo — Mūžīgs Arweave Backups'
+description: 'Inkrementāls Git repo backups uz Arweave visām CI platformām'
+author: 'PermRepo'
+branding:
+  icon: 'archive'
+  color: 'green'
+inputs:
+  wallet_address:
+    description: 'Tava maka publiskā adrese'
+    required: true
+outputs:
+  status:
+    description: 'Backupa statuss'
+runs:
+  using: 'node20'
+  main: 'src/index.js'
