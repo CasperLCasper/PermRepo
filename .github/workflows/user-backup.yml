@@ -3,11 +3,10 @@ name: PermRepo Backup
 on:
   issues:
     types: [opened]
-  workflow_dispatch:
 
 jobs:
   backup:
-    if: contains(github.event.issue.title, '[PermRepo Backup]') || github.event_name == 'workflow_dispatch'
+    if: contains(github.event.issue.title, '[PermRepo Backup]')
     runs-on: ubuntu-latest
     
     steps:
