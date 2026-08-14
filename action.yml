@@ -13,4 +13,4 @@ outputs:
     description: 'Backupa statuss'
 runs:
   using: 'node24'
-  main: 'action/src/index.js'
+  main: 'action/dist/index.js'
