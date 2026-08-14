@@ -65,11 +65,16 @@ async function run() {
             return;
         }
         
-        // 4. REPO NOSAUKUMS
+        // 4. REPO NOSAUKUMS UN HASH
         console.log('4. Iegūstam repo nosaukumu...');
         const repoMatch = message.match(/Repository: (.+)/);
         const repoName = repoMatch ? repoMatch[1] : `${owner}/${repo}`;
-        const repoHash = ethers.id(repoName);
+        
+        // PAREIZAIS HASH APRĒĶINS
+        const repoHash = ethers.keccak256(
+            ethers.AbiCoder.defaultAbiCoder().encode(['string'], [repoName])
+        );
+        
         console.log('  repoName:', repoName);
         console.log('  repoHash:', repoHash);
         
