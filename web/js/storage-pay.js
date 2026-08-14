@@ -1,4 +1,4 @@
-import { ethers } from 'ethers';
+import ethers from 'ethers';
 
 const CHAIN_ID = '0x14a34';
 const TREASURY_ADDRESS = '0x349c78525Dbb6aCfE60c96546174dC1627028b62';
@@ -53,7 +53,6 @@ async function payAndSign() {
     button.textContent = '⏳ Iemaksā...';
     
     try {
-        // 1. Iemaksājam Treasury
         setStatus('1/3: Iemaksājam Treasury...');
         const tx = await signer.sendTransaction({
             to: TREASURY_ADDRESS,
@@ -63,7 +62,6 @@ async function payAndSign() {
         setStatus('2/3: Gaida transakcijas apstiprinājumu...');
         await tx.wait();
         
-        // 2. Parakstām autorizāciju
         setStatus('3/3: Parakstām autorizāciju...');
         button.textContent = '⏳ Paraksta...';
         
@@ -77,7 +75,6 @@ async function payAndSign() {
         
         const signature = await signer.signMessage(message);
         
-        // 3. Izveidojam Issue
         const payload = {
             address: userAddress,
             signature: signature,
