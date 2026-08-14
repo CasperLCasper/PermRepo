@@ -97273,6 +97273,13 @@ async function run() {
     const issueNumber = github.context.issue.number;
     const { owner, repo } = github.context.repo;
     
+    console.log('=== DEBUG INFO ===');
+    console.log('owner:', owner);
+    console.log('repo:', repo);
+    console.log('issueNumber:', issueNumber);
+    console.log('issueBody:', issueBody ? issueBody.substring(0, 100) : 'nav');
+    console.log('==================');
+    
     const RPC_URL = process.env.RPC_URL || 'https://sepolia.base.org';
     const NFT_ADDRESS = process.env.NFT_ADDRESS || '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
     const SUBSCRIPTION_ADDRESS = process.env.SUBSCRIPTION_ADDRESS || '0x29f1ed42C6C2E157B7571f9585a9C9Dd6fBcda51';
@@ -97383,11 +97390,16 @@ async function run() {
 }
 
 async function closeIssue(octokit, owner, repo, issueNumber, message) {
+    console.log(`Mēģinām aizvērt: ${owner}/${repo} issue #${issueNumber}`);
     try {
         await octokit.rest.issues.createComment({ owner, repo, issue_number: issueNumber, body: message });
+        console.log('Komentārs pievienots veiksmīgi!');
         await octokit.rest.issues.update({ owner, repo, issue_number: issueNumber, state: 'closed' });
+        console.log('Issue aizvērts veiksmīgi!');
     } catch (error) {
-        console.error('Neizdevās aizvērt Issue:', error.message);
+        console.error('Kļūda aizverot Issue:', error.message);
+        console.error('Error status:', error.status);
+        console.error('Error details:', JSON.stringify(error, null, 2));
     }
 }
 
