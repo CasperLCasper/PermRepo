@@ -6,7 +6,7 @@ async function run() {
     const githubToken = core.getInput('github_token');
     const octokit = github.getOctokit(githubToken);
     const issueBody = process.env.ISSUE_BODY;
-    const issueNumber = Number.parseInt(process.env.ISSUE_NUMBER, 10);
+    const issueNumber = github.context.issue.number;
     const { owner, repo } = github.context.repo;
     
     const RPC_URL = process.env.RPC_URL || 'https://sepolia.base.org';
