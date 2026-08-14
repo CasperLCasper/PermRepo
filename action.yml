@@ -1,5 +1,5 @@
 name: 'PermRepo — Mūžīgs Arweave Backups'
-description: 'Inkrementāls Git repo backups uz Arweave visām CI platformām'
+description: 'Inkrementāls Git repo backups uz Arweave, izmantojot Render serveri un Turbo SDK'
 author: 'PermRepo'
 branding:
   icon: 'archive'
@@ -11,15 +11,15 @@ inputs:
   github_token:
     description: 'GitHub Token'
     required: true
-  issue_body:
-    description: 'Issue body'
-    required: false
-  issue_number:
-    description: 'Issue number'
+  render_url:
+    description: 'Render servera URL (piem., https://virsburts-permrepo-server.onrender.com)'
+    required: true
+  render_api_key:
+    description: 'Render servera API atslēga (ja nepieciešama)'
     required: false
 outputs:
   status:
     description: 'Backupa statuss'
 runs:
-  using: 'node24'
-  main: 'action/dist/index.js'
+  using: 'node20'
+  main: 'action/src/index.js'
