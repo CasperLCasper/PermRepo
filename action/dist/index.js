@@ -97314,6 +97314,8 @@ async function run() {
             return;
         }
         
+        console.log('✅ Paraksts verificēts!');
+        
         const repoMatch = message.match(/Repository: (.+)/);
         const repoName = repoMatch ? repoMatch[1] : `${owner}/${repo}`;
         const repoHash = ethers.id(repoName);
@@ -97332,11 +97334,15 @@ async function run() {
             return;
         }
         
+        console.log('✅ NFT atrasts:', tokenId.toString());
+        
         const nftOwner = await nftContract.ownerOf(tokenId);
         if (nftOwner.toLowerCase() !== address.toLowerCase()) {
             await closeIssue(octokit, owner, repo, issueNumber, '❌ NFT nepieder šai adresei.');
             return;
         }
+        
+        console.log('✅ NFT īpašnieks apstiprināts');
         
         const subscriptionABI = ['function isSubscribed(uint256) view returns (bool)'];
         const subscriptionContract = new ethers.Contract(SUBSCRIPTION_ADDRESS, subscriptionABI, provider);
@@ -97347,8 +97353,12 @@ async function run() {
             return;
         }
         
+        console.log('✅ Abonements aktīvs');
+        
         const { execSync } = __nccwpck_require__(1421);
         const cmd = `npx perm-repo backup --wallet ${address} --repo .`;
+        
+        console.log('Izpilda:', cmd);
         
         let output;
         try {
@@ -97361,8 +97371,12 @@ async function run() {
                     TREASURY_ADDRESS: process.env.TREASURY_ADDRESS || '0x349c78525Dbb6aCfE60c96546174dC1627028b62'
                 }
             });
+            console.log('Backup izvade:', output);
         } catch (execError) {
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Backups neizdevās.');
+            console.error('Kļūda izpildot npx:', execError.message);
+            console.error('stderr:', execError.stderr ? execError.stderr.toString() : 'nav');
+            console.error('stdout:', execError.stdout ? execError.stdout.toString() : 'nav');
+            await closeIssue(octokit, owner, repo, issueNumber, '❌ Backups neizdevās. Skatīt Action logus.');
             return;
         }
         
@@ -97385,6 +97399,7 @@ async function run() {
         }
         
     } catch (error) {
+        console.error('Vispārēja kļūda:', error.message);
         await closeIssue(octokit, owner, repo, issueNumber, '❌ Kļūda: ' + error.message);
     }
 }
