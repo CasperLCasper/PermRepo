@@ -1,6 +1,6 @@
 {
   "name": "perm-repo-action",
-  "version": "2.0.41",
+  "version": "2.0.42",
   "description": "PermRepo GitHub Action — verificē, pārbauda un izsauc backupu",
   "main": "dist/index.js",
   "scripts": {
