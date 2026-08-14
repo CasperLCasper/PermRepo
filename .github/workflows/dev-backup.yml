@@ -1,4 +1,4 @@
-name: PermRepo Backup (Dev)
+name: PermRepo Backup
 
 on:
   issues:
@@ -20,11 +20,12 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
       
       - name: Install dependencies
-        working-directory: action
-        run: npm install
+        run: |
+          cd action
+          npm install
       
       - name: Verify and Execute Backup
         working-directory: action
