@@ -7,12 +7,27 @@ const crypto = require('node:crypto');
 
 const RENDER_URL = process.env.RENDER_URL || core.getInput('render_url');
 const RENDER_API_KEY = process.env.RENDER_API_KEY || core.getInput('render_api_key') || '';
+const WALLET_ADDRESS = process.env.WALLET_ADDRESS || core.getInput('wallet_address');
+
+const RPC_URL = process.env.RPC_URL || 'https://sepolia.base.org';
+const NFT_ADDRESS = process.env.NFT_ADDRESS || '0xeD3eB455cAeb057a034d7bE2368cdCEA37Faa1d4';
+const SUBSCRIPTION_ADDRESS = process.env.SUBSCRIPTION_ADDRESS || '0x29f1ed42C6C2E157B7571f9585a9C9Dd6fBcda51';
 
 const IGNORE_PATTERNS = '.git,node_modules,.next,dist,build,.cache,coverage,.env,.env.local,permarepo.lock.json,.permrepo'.split(',');
-const MAX_FILE_SIZE_BYTES = 104857600; // 100 MB
+const MAX_FILE_SIZE_BYTES = 104857600;
+const LOCK_FILE_NAME = 'permarepo.lock.json';
+
+const NFT_ABI = [
+    "function repositoryTokens(bytes32 repoHash) external view returns (uint256)",
+    "function ownerOf(uint256 tokenId) external view returns (address)"
+];
+
+const SUBSCRIPTION_ABI = [
+    "function isSubscribed(uint256 tokenId) external view returns (bool)"
+];
 
 function scanFiles(rootPath) {
-    const files = [];
+    const files = {};
     const ignore = IGNORE_PATTERNS;
 
     const shouldIgnore = (relativePath) => {
@@ -34,20 +49,14 @@ function scanFiles(rootPath) {
             else if (entry.isFile()) {
                 try {
                     const stat = fs.statSync(fullPath);
-                    if (stat.size > MAX_FILE_SIZE_BYTES) { 
-                        console.warn(`⚠️ Izlaists liels fails: ${relativePath}`); 
-                        continue; 
-                    }
+                    if (stat.size > MAX_FILE_SIZE_BYTES) continue;
                     const content = fs.readFileSync(fullPath);
-                    files.push({
-                        path: relativePath,
+                    files[relativePath] = {
+                        hash: crypto.createHash('sha256').update(content).digest('hex'),
                         size: content.length,
-                        content: content.toString('base64'),
-                        hash: crypto.createHash('sha256').update(content).digest('hex')
-                    });
-                } catch (error) {
-                    console.warn(`⚠️ Neizdevās nolasīt: ${relativePath}`);
-                }
+                        content: content.toString('base64')
+                    };
+                } catch {}
             }
         }
     };
@@ -56,33 +65,55 @@ function scanFiles(rootPath) {
     return files;
 }
 
-function getRepoName(repoPath) {
-    let repoName;
+function loadLockFile(repoPath) {
+    const lockPath = path.join(repoPath, LOCK_FILE_NAME);
+    if (!fs.existsSync(lockPath)) return { files: {} };
+    try {
+        const data = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
+        return { files: data.files || {} };
+    } catch {
+        return { files: {} };
+    }
+}
+
+function compareWithLock(currentFiles, lockData) {
+    const lockFiles = lockData.files || {};
+    const changed = [];
+    const unchanged = {};
     
-    if (process.env.GITHUB_REPOSITORY) {
-        repoName = process.env.GITHUB_REPOSITORY;
-    } else {
-        const gitConfigPath = path.join(repoPath, '.git', 'config');
-        if (fs.existsSync(gitConfigPath)) {
-            try {
-                const content = fs.readFileSync(gitConfigPath, 'utf-8');
-                const urlMatch = content.match(/url\s*=\s*(.+)/);
-                if (urlMatch) {
-                    const m = urlMatch[1].trim().match(/[:\/]([^\/]+\/[^\/]+?)(\.git)?$/);
-                    if (m) repoName = m[1];
-                }
-            } catch {}
-        }
-        if (!repoName) {
-            try {
-                if (fs.existsSync(repoPath) && fs.statSync(repoPath).isDirectory()) {
-                    repoName = path.basename(path.resolve(repoPath));
-                }
-            } catch {}
+    for (const [filePath, info] of Object.entries(currentFiles)) {
+        if (lockFiles[filePath] && lockFiles[filePath].hash === info.hash) {
+            unchanged[filePath] = {
+                hash: info.hash,
+                size: info.size,
+                txId: lockFiles[filePath].txId
+            };
+        } else {
+            changed.push({
+                path: filePath,
+                size: info.size,
+                content: info.content,
+                hash: info.hash
+            });
         }
     }
     
-    return (repoName || 'unknown-repo').trim();
+    const deleted = Object.keys(lockFiles).filter(fp => !currentFiles[fp]);
+    
+    return { changed, unchanged, deleted };
+}
+
+function getRepoName() {
+    if (process.env.GITHUB_REPOSITORY) {
+        return process.env.GITHUB_REPOSITORY.trim();
+    }
+    return 'unknown-repo';
+}
+
+function getRepoHash(repoName) {
+    return ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(['string'], [repoName])
+    );
 }
 
 async function run() {
@@ -90,7 +121,6 @@ async function run() {
     
     const githubToken = core.getInput('github_token') || process.env.GITHUB_TOKEN;
     const octokit = github.getOctokit(githubToken);
-    const issueBody = core.getInput('issue_body') || process.env.ISSUE_BODY || '';
     const issueNumber = Number.parseInt(core.getInput('issue_number') || github.context.issue.number || '0');
     const { owner, repo } = github.context.repo;
     
@@ -98,167 +128,182 @@ async function run() {
     console.log('  owner:', owner);
     console.log('  repo:', repo);
     console.log('  issueNumber:', issueNumber);
-    console.log('  issueBody garums:', issueBody.length);
+    console.log('  WALLET_ADDRESS:', WALLET_ADDRESS || 'NAV');
     console.log('  RENDER_URL:', RENDER_URL || 'NAV');
-    console.log('  RENDER_API_KEY:', RENDER_API_KEY ? 'IR' : 'NAV');
+    
+    if (!WALLET_ADDRESS) {
+        console.error('❌ WALLET_ADDRESS nav konfigurēts');
+        await closeIssue(octokit, owner, repo, issueNumber, '❌ WALLET_ADDRESS nav iestatīts GitHub Secrets.');
+        return;
+    }
     
     if (!RENDER_URL) {
         console.error('❌ RENDER_URL nav konfigurēts');
-        await closeIssue(octokit, owner, repo, issueNumber, '❌ Servera konfigurācijas kļūda: RENDER_URL nav iestatīts.');
+        await closeIssue(octokit, owner, repo, issueNumber, '❌ RENDER_URL nav iestatīts GitHub Secrets.');
         return;
     }
     
     try {
-        // 1. PARSE JSON
-        console.log('1. Parsejam JSON no Issue...');
-        const jsonMatch = issueBody.match(/```json\n([\s\S]*?)\n```/);
-        if (!jsonMatch) {
-            console.log('❌ Nav JSON');
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Neizdevās atrast JSON datus.');
-            return;
-        }
-        console.log('✅ JSON atrasts');
-        
-        let payload;
-        try {
-            payload = JSON.parse(jsonMatch[1]);
-        } catch (parseError) {
-            console.error('❌ JSON parse kļūda:', parseError.message);
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Neizdevās noparsēt JSON: ' + parseError.message);
-            return;
-        }
-        
-        const { address, signature, message, timestamp } = payload;
-        
-        if (!address || !signature || !message || !timestamp) {
-            console.log('❌ Trūkst dati JSON');
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ JSON trūkst nepieciešamie lauki (address, signature, message, timestamp).');
-            return;
-        }
-        console.log('✅ JSON parse veiksmīgs');
-        
-        // 2. TIMESTAMP PĀRBAUDE
-        console.log('2. Pārbaudam timestamp...');
-        const now = Math.floor(Date.now() / 1000);
-        if (now - timestamp > 600) {
-            console.log('❌ Paraksts novecojis');
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Paraksts ir novecojis (>10 min).');
-            return;
-        }
-        console.log('✅ Timestamp OK');
-        
-        // 3. PARAKSTA VERIFIKĀCIJA
-        console.log('3. Verificējam parakstu...');
-        let recoveredAddress;
-        try {
-            recoveredAddress = ethers.verifyMessage(message, signature);
-            console.log('✅ Paraksts verificēts, adrese:', recoveredAddress);
-        } catch (verifyError) {
-            console.error('❌ Paraksta verifikācijas kļūda:', verifyError.message);
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Neizdevās verificēt parakstu: ' + verifyError.message);
-            return;
-        }
-        
-        if (recoveredAddress.toLowerCase() !== address.toLowerCase()) {
-            console.log('❌ Adreses nesakrīt');
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Paraksts neatbilst adresei.');
-            return;
-        }
-        
-        // 4. REPO NOSAUKUMS
-        console.log('4. Iegūstam repo nosaukumu...');
-        const repoMatch = message.match(/Repository: (.+)/);
-        const repoName = repoMatch ? repoMatch[1] : `${owner}/${repo}`;
+        const repoName = getRepoName();
+        const repoHash = getRepoHash(repoName);
         console.log('  repoName:', repoName);
+        console.log('  repoHash:', repoHash);
         
-        // 5. SKENĒT FAILUS
-        console.log('5. Skenējam failus...');
-        const files = scanFiles(process.cwd());
-        console.log(`  Atrasti ${files.length} faili`);
+        const provider = new ethers.JsonRpcProvider(RPC_URL);
         
-        if (files.length === 0) {
-            console.log('❌ Nav failu');
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Nav atrasti faili backupam.');
+        // ==========================================
+        // 1. PĀRBAUDĪT NFT
+        // ==========================================
+        console.log('\n1. Pārbaudam NFT...');
+        const nftContract = new ethers.Contract(NFT_ADDRESS, NFT_ABI, provider);
+        const tokenId = await nftContract.repositoryTokens(repoHash);
+        
+        let hasNFT = false;
+        let hasSubscription = false;
+        
+        if (tokenId === 0n || tokenId === 0) {
+            console.log('❌ Nav NFT');
+        } else {
+            const nftOwner = await nftContract.ownerOf(tokenId);
+            if (nftOwner.toLowerCase() === WALLET_ADDRESS.toLowerCase()) {
+                hasNFT = true;
+                console.log('✅ NFT atrasts, tokenId:', tokenId.toString());
+            } else {
+                console.log('❌ NFT nepieder šai adresei');
+                await closeIssue(octokit, owner, repo, issueNumber,
+                    '❌ NFT nepieder šai adresei\n\n' +
+                    `NFT īpašnieks: ${nftOwner}\n` +
+                    `Tava adrese: ${WALLET_ADDRESS}`
+                );
+                return;
+            }
+        }
+        
+        // ==========================================
+        // 2. PĀRBAUDĪT ABONEMENTU
+        // ==========================================
+        console.log('\n2. Pārbaudam abonementu...');
+        
+        if (hasNFT) {
+            const subscriptionContract = new ethers.Contract(SUBSCRIPTION_ADDRESS, SUBSCRIPTION_ABI, provider);
+            hasSubscription = await subscriptionContract.isSubscribed(tokenId);
+            
+            if (hasSubscription) {
+                console.log('✅ Abonements aktīvs');
+            } else {
+                console.log('❌ Nav abonementa');
+            }
+        }
+        
+        // ==========================================
+        // 3. JA KAUT KAS TRŪKST — INFORMĒT LIETOTĀJU
+        // ==========================================
+        if (!hasNFT || !hasSubscription) {
+            let msg = '';
+            
+            if (!hasNFT) msg += '❌ Nav atrasts NFT\n';
+            if (!hasSubscription) msg += '❌ Nav atrasts abonements\n';
+            
+            msg += '\n📋 Lai turpinātu:\n\n';
+            
+            let step = 1;
+            
+            if (!hasNFT) {
+                msg += `${step}. Izveido NFT:\n`;
+                msg += `   https://virsburts-permrepo-server.onrender.com/nft.html?repo=${encodeURIComponent(repoName)}\n\n`;
+                step++;
+            }
+            
+            if (!hasSubscription) {
+                msg += `${step}. Iegādājies abonementu:\n`;
+                msg += `   https://virsburts-permrepo-server.onrender.com/subscribe.html?repo=${encodeURIComponent(repoName)}\n\n`;
+            }
+            
+            msg += 'Kad viss izdarīts, izveido jaunu Issue ar nosaukumu [PermRepo Backup]';
+            
+            await closeIssue(octokit, owner, repo, issueNumber, msg);
             return;
         }
         
-        const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
-        console.log(`  Kopējais izmērs: ${(totalBytes / 1024).toFixed(1)} KB`);
+        console.log('✅ NFT un abonements OK');
         
-        // 6. SŪTĪT UZ RENDER
-        console.log('6. Sūtam uz Render serveri...');
-        console.log('  URL:', RENDER_URL + '/api/execute-backup');
+        // ==========================================
+        // 4. SKENĒT FAILUS (INKREMENTĀLI)
+        // ==========================================
+        console.log('\n4. Skenējam failus...');
+        const currentFiles = scanFiles(process.cwd());
+        const lockData = loadLockFile(process.cwd());
+        const { changed, unchanged, deleted } = compareWithLock(currentFiles, lockData);
+        
+        console.log(`  Izmainīti: ${changed.length} faili`);
+        console.log(`  Nemainīti: ${Object.keys(unchanged).length} faili`);
+        console.log(`  Dzēsti: ${deleted.length} faili`);
+        
+        if (changed.length === 0 && deleted.length === 0) {
+            await closeIssue(octokit, owner, repo, issueNumber, '✅ Nav izmaiņu kopš pēdējā backupa.');
+            return;
+        }
+        
+        // ==========================================
+        // 5. SŪTĪT UZ RENDER
+        // ==========================================
+        console.log('\n5. Sūtam uz Render...');
         
         const requestBody = {
             repoName,
-            files,
-            signature,
-            message,
-            timestamp,
-            address
+            files: changed,
+            unchangedFiles: unchanged,
+            deletedFiles: deleted,
+            walletAddress: WALLET_ADDRESS
         };
         
         const headers = {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            ...(RENDER_API_KEY ? { 'X-API-Key': RENDER_API_KEY } : {})
         };
         
-        if (RENDER_API_KEY) {
-            headers['X-API-Key'] = RENDER_API_KEY;
-        }
+        const response = await fetch(`${RENDER_URL}/api/prepare-backup`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(requestBody),
+            signal: AbortSignal.timeout(300000)
+        });
         
-        let response;
-        try {
-            response = await fetch(`${RENDER_URL}/api/execute-backup`, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(requestBody),
-                signal: AbortSignal.timeout(300000) // 5 minūtes timeout
-            });
-        } catch (fetchError) {
-            console.error('❌ Fetch kļūda:', fetchError.message);
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Neizdevās sazināties ar Render serveri: ' + fetchError.message);
-            return;
-        }
-        
-        let result;
-        try {
-            result = await response.json();
-        } catch (jsonError) {
-            console.error('❌ Response nav JSON:', jsonError.message);
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Render serveris atgrieza nekorektu atbildi.');
-            return;
-        }
+        const result = await response.json();
         
         if (!response.ok || !result.success) {
-            const errorMsg = result.error || `Render serveris atgrieza ${response.status}`;
-            console.error('❌ Render kļūda:', errorMsg);
-            await closeIssue(octokit, owner, repo, issueNumber, '❌ Backupa kļūda: ' + errorMsg);
+            await closeIssue(octokit, owner, repo, issueNumber, '❌ Kļūda: ' + (result.error || 'Nezināma kļūda'));
             return;
         }
         
-        console.log('✅ Render serveris veiksmīgi izpildīja backupu');
-        console.log('  Manifesta TX:', result.manifestTxId);
-        console.log('  Faili:', result.uploadedFiles.length);
+        console.log('✅ Render sagatavoja backupu');
+        console.log('  Backup ID:', result.backupId);
         console.log('  Izmaksas:', result.costEth, 'ETH');
         
-        // 7. AIZVĒRT ISSUE AR PANĀKUMU
-        console.log('7. Aizveram Issue ar panākumu...');
+        // ==========================================
+        // 6. DOD APMAKSAS LINKU
+        // ==========================================
+        const payUrl = `https://virsburts-permrepo-server.onrender.com/storage-pay.html?backupId=${result.backupId}&repo=${encodeURIComponent(repoName)}&amount=${result.costEth}`;
+        
+        console.log('\n6. Dodam apmaksas linku...');
+        
         await closeIssue(octokit, owner, repo, issueNumber,
-            '✅ Backups veiksmīgs!\n\n' +
-            `🔗 Manifests: \`${result.manifestTxId}\`\n` +
-            `📊 Faili: ${result.uploadedFiles.length}\n` +
-            `📦 Izmērs: ${(result.totalSize / 1024).toFixed(1)} KB\n` +
-            `💰 Izmaksas: ${result.costEth} ETH\n` +
-            `🎫 Token ID: \`${result.tokenId}\``
+            '✅ NFT atrasts\n' +
+            '✅ Abonements aktīvs\n\n' +
+            '📦 Backups sagatavots!\n\n' +
+            `💰 Apmaksas summa: ${result.costEth} ETH\n\n` +
+            'Lai pabeigtu backupu, atver apmaksas lapu:\n\n' +
+            `${payUrl}\n\n` +
+            'Pēc apmaksas backups tiks automātiski pabeigts.'
         );
         
     } catch (error) {
-        console.error('💥 VISPĀRĒJA KĻŪDA:', error.message);
-        console.error('Pilna kļūda:', error);
+        console.error('💥 KĻŪDA:', error.message);
+        console.error(error);
         await closeIssue(octokit, owner, repo, issueNumber, '❌ Kļūda: ' + error.message);
     }
     
-    console.log('=== ACTION BEIDZAS ===');
+    console.log('\n=== ACTION BEIDZAS ===');
 }
 
 async function closeIssue(octokit, owner, repo, issueNumber, message) {
