@@ -1,66 +1,35 @@
-import { ethers } from 'ethers';
-
-const CHAIN_ID = '0x14a34';
-const TREASURY_ADDRESS = '0x349c78525Dbb6aCfE60c96546174dC1627028b62';
-
-const params = new URLSearchParams(window.location.search);
-const amountParam = params.get('amount') || '0.000001';
-
-let signer;
-
-async function init() {
-    document.getElementById('amountDisplay').textContent = amountParam + ' ETH';
+<!DOCTYPE html>
+<html lang="lv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PermRepo — Iemaksāt Glabāšanai</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="container text-center">
+    <h1>💰 Iemaksāt Glabāšanai</h1>
+    <p class="subtitle">Iemaksā nepieciešamo summu un paraksti autorizāciju</p>
     
-    if (!window.ethereum) {
-        showError('Instalē MetaMask!');
-        return;
-    }
+    <div class="info-row text-left">
+        <span class="info-label">Repo</span>
+        <input type="text" id="repoInput" placeholder="piem., lietotajs/repo" value="">
+    </div>
     
-    try {
-        await window.ethereum.request({ 
-            method: 'wallet_switchEthereumChain', 
-            params: [{ chainId: CHAIN_ID }] 
-        });
-        
-        const provider = new ethers.BrowserProvider(window.ethereum);
-        signer = await provider.getSigner();
-        
-        const button = document.getElementById('payButton');
-        button.onclick = payToTreasury;
-    } catch (e) {
-        showError(e.message);
-    }
-}
-
-async function payToTreasury() {
-    const button = document.getElementById('payButton');
-    button.disabled = true;
-    button.textContent = '⏳ Gaida apstiprinājumu...';
+    <div class="info-row text-left">
+        <span class="info-label">Treasury adrese</span>
+        <span class="info-value word-break" id="treasuryAddress">Ielādē...</span>
+    </div>
     
-    try {
-        const tx = await signer.sendTransaction({
-            to: TREASURY_ADDRESS,
-            value: ethers.parseEther(amountParam)
-        });
-        
-        setStatus('⏳ Gaida transakcijas apstiprinājumu...');
-        await tx.wait();
-        
-        setStatus('✅ Iemaksa veiksmīga! Tagad izveido Issue GitHub!');
-        button.textContent = '✅ Gatavs!';
-        
-    } catch (e) {
-        if (e.code === 'ACTION_REJECTED') {
-            showError('Transakcija atcelta');
-        } else {
-            showError(e.message);
-        }
-        button.disabled = false;
-        button.textContent = '💳 Iemaksāt ar MetaMask';
-    }
-}
-
-function setStatus(msg) { document.getElementById('status').textContent = msg; }
-function showError(msg) { document.getElementById('error').textContent = msg; }
-
-init();
+    <div class="info-row text-left">
+        <span class="info-label">Summa</span>
+        <span class="info-value" id="amountDisplay">-</span>
+    </div>
+    
+    <button id="payButton" class="sign-button" disabled>⏳ Gaida savienojumu...</button>
+    <div class="status" id="status"></div>
+    <div class="error" id="error"></div>
+</div>
+<script type="module" src="js/storage-pay.js"></script>
+</body>
+</html>
