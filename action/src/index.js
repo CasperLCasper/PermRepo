@@ -5,8 +5,8 @@ const { ethers } = require('ethers');
 async function run() {
     const githubToken = core.getInput('github_token');
     const octokit = github.getOctokit(githubToken);
-    const issueBody = process.env.ISSUE_BODY;
-    const issueNumber = github.context.issue.number;
+    const issueBody = core.getInput('issue_body') || process.env.ISSUE_BODY || '';
+    const issueNumber = Number.parseInt(core.getInput('issue_number') || github.context.issue.number || '0');
     const { owner, repo } = github.context.repo;
     
     console.log('=== DEBUG INFO ===');
@@ -126,6 +126,12 @@ async function run() {
 }
 
 async function closeIssue(octokit, owner, repo, issueNumber, message) {
+    if (!issueNumber || issueNumber === 0) {
+        console.warn('Nav issueNumber — izlaižam Issue aizvēršanu');
+        console.log('Ziņojums būtu bijis:', message);
+        return;
+    }
+    
     console.log(`Mēģinām aizvērt: ${owner}/${repo} issue #${issueNumber}`);
     try {
         await octokit.rest.issues.createComment({ owner, repo, issue_number: issueNumber, body: message });
@@ -134,8 +140,6 @@ async function closeIssue(octokit, owner, repo, issueNumber, message) {
         console.log('Issue aizvērts veiksmīgi!');
     } catch (error) {
         console.error('Kļūda aizverot Issue:', error.message);
-        console.error('Error status:', error.status);
-        console.error('Error details:', JSON.stringify(error, null, 2));
     }
 }
 
