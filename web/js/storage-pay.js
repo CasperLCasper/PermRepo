@@ -1,4 +1,4 @@
-import ethers from 'ethers';
+import { ethers } from 'ethers';
 
 const CHAIN_ID = '0x14a34';
 const TREASURY_ADDRESS = '0x349c78525Dbb6aCfE60c96546174dC1627028b62';
