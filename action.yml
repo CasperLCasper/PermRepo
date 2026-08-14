@@ -11,6 +11,12 @@ inputs:
   github_token:
     description: 'GitHub Token'
     required: true
+  issue_body:
+    description: 'Issue body'
+    required: false
+  issue_number:
+    description: 'Issue number'
+    required: false
 outputs:
   status:
     description: 'Backupa statuss'
