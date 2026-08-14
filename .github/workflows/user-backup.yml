@@ -4,6 +4,10 @@ on:
   issues:
     types: [opened]
 
+permissions:
+  issues: write
+  contents: read
+
 jobs:
   backup:
     if: contains(github.event.issue.title, '[PermRepo Backup]')
