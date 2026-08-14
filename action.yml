@@ -8,6 +8,9 @@ inputs:
   wallet_address:
     description: 'Tava maka publiskā adrese'
     required: true
+  github_token:
+    description: 'GitHub Token'
+    required: true
 outputs:
   status:
     description: 'Backupa statuss'
